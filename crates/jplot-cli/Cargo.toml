@@ -1,0 +1,19 @@
+[package]
+name = "jplot-cli"
+description = "Render jplot spec JSON files to SVG/PNG"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "jplot"
+path = "src/main.rs"
+
+[dependencies]
+jplot-core.workspace = true
+jplot-render = { path = "../jplot-render", features = ["png"] }
+serde_json.workspace = true
+
+[lints]
+workspace = true

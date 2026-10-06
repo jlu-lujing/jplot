@@ -6,9 +6,17 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["svg"]
+svg = []
+png = ["dep:usvg", "dep:tiny-skia", "dep:resvg"]
+
 [dependencies]
 jplot-core.workspace = true
 thiserror.workspace = true
+usvg = { version = "0.44", optional = true }
+tiny-skia = { version = "0.11", optional = true }
+resvg = { version = "0.44", optional = true }
 
 [lints]
 workspace = true

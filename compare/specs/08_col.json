@@ -1,0 +1,1 @@
+{"data":{"g":{"kind":"categorical","values":["a","b","c"]},"v":{"kind":"numeric","values":[3,7,5]}},"mapping":{"map":{"x":"g","y":"v"}},"layers":[{"geom":{"kind":"col"},"stat":null,"position":{"kind":"identity"},"mapping":{"map":[]},"args":[],"inherit_aes":true}],"scales":[],"labels":{"title":"Counts","x":"group","y":"value"},"theme":{"kind":"grey"},"width":720,"height":480}

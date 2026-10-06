@@ -3,7 +3,7 @@ resolver = "2"
 members = [
     "crates/jplot-core",
     "crates/jplot-render",
-    "crates/jplot-ffi",
+    "crates/jplot-cli",
 ]
 
 [workspace.package]
@@ -30,6 +30,8 @@ arrow = { version = "55", features = ["ffi"] }
 ab_glyph = "0.2"
 tiny-skia = "0.11"
 resvg = "0.44"
+usvg = "0.44"
+fontdb = { version = "0.16", features = ["fontconfig"] }
 
 # workspace-internal
 jplot-core = { path = "crates/jplot-core" }
