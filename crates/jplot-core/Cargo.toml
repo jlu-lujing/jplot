@@ -1,0 +1,16 @@
+[package]
+name = "jplot-core"
+description = "Grammar of Graphics engine: spec, build pipeline, scene graph (no rendering)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+arrow.workspace = true
+
+[lints]
+workspace = true

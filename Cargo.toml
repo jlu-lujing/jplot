@@ -1,0 +1,40 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/jplot-core",
+    "crates/jplot-render",
+    "crates/jplot-ffi",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jlu/jplot"
+rust-version = "1.85"
+
+[workspace.lints.rust]
+unsafe_code = "warn"
+missing_docs = "allow"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+thiserror = "2"
+arrow = { version = "55", features = ["ffi"] }
+ab_glyph = "0.2"
+tiny-skia = "0.11"
+resvg = "0.44"
+
+# workspace-internal
+jplot-core = { path = "crates/jplot-core" }
+jplot-render = { path = "crates/jplot-render" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
