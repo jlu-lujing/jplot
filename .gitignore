@@ -9,4 +9,5 @@ __pycache__/
 .pytest_cache/
 .Rhistory
 .Rproj.user
+Rplots.pdf
 gallery/*/_pending/
