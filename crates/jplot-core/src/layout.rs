@@ -215,7 +215,10 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
             sc.layer(layer::AXES).push(Primitive::Text {
                 content: lab.clone(),
                 x: vp.x0 - tick - probes::axis::YLABEL_INSET,
-                y: y + probes::axis::YLABEL_PAD + probes::axis::BASELINE_FRAC * st.size,
+                // vertical-centre on the tick (vjust=0.5): baseline sits half a
+                // grid text-box below the tick, matching svglite (triage: the
+                // old 0.31+0.76·size pushed labels ~4px low).
+                y: y + probes::axis::VJUST_BOX / 2.0 * st.size,
                 style: st,
             });
         }

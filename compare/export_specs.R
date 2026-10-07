@@ -280,8 +280,7 @@ save("35_box_coef", spec(df, list(x = "cyl", y = "mpg"), list(layer("boxplot", a
 render("35_box_coef", ggplot(df, aes(cyl, mpg)) + geom_boxplot(coef = 0.5))
 
 ## 36 linetype mapping -------------------------------------------------------
-dlt <- data.frame(x = rep(1:6, each = 1), y = 1:6)
-dlt <- transform(dlt, x = rep(1:10, 3), y = rep(1:10, 3), l = rep(c("a", "b", "c"), each = 10))
+dlt <- data.frame(x = rep(1:10, 3), y = rep(1:10, 3), l = rep(c("a", "b", "c"), each = 10))
 save("36_linetype", spec(dlt, list(x = "x", y = "y", linetype = "l"), list(layer("line"))))
 render("36_linetype", ggplot(dlt, aes(x, y, linetype = l)) + geom_line())
 
