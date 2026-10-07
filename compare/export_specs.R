@@ -14,6 +14,7 @@ if (!is.null(.here)) setwd(.here)
 dir.create("specs", showWarnings = FALSE)
 dir.create("refs", showWarnings = FALSE)
 dir.create("ours", showWarnings = FALSE)
+set.seed(42)
 
 q2 <- function(v) if (is.numeric(v) && any(!is.finite(v))) { stop("non-finite") }
 jcol <- function(v) {

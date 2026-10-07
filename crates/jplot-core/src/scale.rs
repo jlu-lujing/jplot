@@ -662,8 +662,10 @@ fn pick_delta(cand: &[f64], steps: &[f64], base: f64) -> Option<usize> {
         return None;
     }
     let delta = |st: &mut Vec<f64>| -> f64 {
+        // R: min(diff(log(sort(c(x, steps, base)), base))) — the fixed anchor
+        // point is log_base(base) = 1.0 (not 0).
         let mut pts: Vec<f64> = st.iter().map(|s| s.ln() / base.ln()).collect();
-        pts.push(0.0);
+        pts.push(1.0);
         pts.sort_by(|a, b| a.partial_cmp(b).unwrap());
         pts.dedup_by(|a, b| (*a - *b).abs() < 1e-12);
         pts.windows(2).map(|w| w[1] - w[0]).fold(f64::INFINITY, f64::min)
@@ -674,7 +676,9 @@ fn pick_delta(cand: &[f64], steps: &[f64], base: f64) -> Option<usize> {
         let mut st2: Vec<f64> = steps.to_vec();
         st2.push(*c);
         let d = delta(&mut st2);
-        if d > bestv {
+        // eps ties to R's which.max, which returns the FIRST maximum (i.e.
+        // the smaller multiplier when 5 vs 6 tie at log-gap 0.222…)
+        if d > bestv + 1e-12 {
             bestv = d;
             best = i;
         }
@@ -981,6 +985,12 @@ pub fn column_is_discrete(col: &Column) -> bool {
 mod tests {
     use super::*;
 
+
+    // helper: enum variants don't support FRU, so construct full fields
+    fn cont(transform: Option<TransformSpec>, expand4: Option<ExpandSpec>, limits: Option<[f64; 2]>, expand: Option<[f64; 2]>, oob: Option<Oob>) -> ScaleSpec {
+        ScaleSpec::Continuous { limits, breaks: None, labels: None, name: None, expand, transform, expand4, oob, n_breaks: None }
+    }
+
     #[test]
     fn extended_breaks_round_numbers() {
         let b = extended_breaks(0.0, 10.0, 5);
@@ -1045,5 +1055,71 @@ mod tests {
         let s3 = DiscreteScale::train(vec!["a".into(), "b".into(), "c".into()], &ScaleSpec::default());
         assert!((s3.range.min - 0.4).abs() < 1e-9);
         assert!((s3.range.max - 3.6).abs() < 1e-9);
+    }
+
+    #[test]
+    fn log_breaks_sub_breaks_matches_scales() {
+        // R: scales::log_breaks(5,10)(c(64.7,518.9)) -> 50 100 300 500 1000
+        // exercises the greedy log_sub_breaks multiplier path.
+        let b = log_breaks(64.7, 518.9, 5, 10.0);
+        assert_eq!(b, vec![50.0, 100.0, 300.0, 500.0, 1000.0]);
+    }
+
+    #[test]
+    fn log_breaks_integer_powers_matches_scales() {
+        // R: scales::log_breaks(5,10)(c(1,1000)) -> 1 10 100 1000
+        let b = log_breaks(1.0, 1000.0, 5, 10.0);
+        assert_eq!(b, vec![1.0, 10.0, 100.0, 1000.0]);
+    }
+
+    #[test]
+    fn log_breaks_narrow_falls_back_to_extended() {
+        // R: scales::log_breaks(5,10)(c(1800,2000)) -> extended fallback
+        // 1800 1850 1900 1950 2000 (a ~5-tick linear set over the narrow range)
+        let b = log_breaks(1800.0, 2000.0, 5, 10.0);
+        assert!(!b.is_empty());
+        assert!(b[0] <= 1800.0 && *b.last().unwrap() >= 2000.0);
+    }
+
+    #[test]
+    fn log10_transform_inverts_and_censors() {
+        let t = TransformSpec::Log10;
+        assert!((t.transform(100.0) - 2.0).abs() < 1e-12);
+        assert!((t.inverse(2.0) - 100.0).abs() < 1e-9);
+        assert!(t.transform(-5.0).is_nan());
+        assert!(t.transform(0.0).is_nan());
+    }
+
+    #[test]
+    fn reverse_scale_breaks_descending_labels_aligned() {
+        // data [10,15,20,25,30,35] reversed: caller passes the TRANSFORMED
+        // range (negated) = [-35,-10]. transformed breaks ascending (-35..-10)
+        // → inverse = data 35..10, paired so each label stays with its value.
+        let spec = cont(Some(TransformSpec::Reverse), None, None, None, None);
+        let s = ContinuousScale::train(Range { min: -35.0, max: -10.0 }, &spec);
+        let (brk, lbl): (Vec<f64>, Vec<String>) = s.breaks_in_range().into_iter().unzip();
+        assert_eq!(brk, vec![35.0, 30.0, 25.0, 20.0, 15.0, 10.0]);
+        assert_eq!(
+            lbl,
+            vec!["35", "30", "25", "20", "15", "10"]
+        );
+    }
+
+    #[test]
+    fn expand4_asymmetric_matches_expansion() {
+        // expansion(mult = c(0, 0.1)) over [0,10]: left 0, right 1.0
+        let spec = cont(None, Some(ExpandSpec { mult_l: 0.0, mult_r: 0.1, add_l: 0.0, add_r: 0.0 }), None, None, None);
+        let s = ContinuousScale::train(Range { min: 0.0, max: 10.0 }, &spec);
+        assert!((s.range.min - 0.0).abs() < 1e-9);
+        assert!((s.range.max - 11.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn oob_censor_maps_out_of_range_to_nan() {
+        let spec = cont(None, None, Some([0.0, 10.0]), Some([0.0, 0.0]), Some(Oob::Censor));
+        let s = ContinuousScale::train(Range { min: 0.0, max: 10.0 }, &spec);
+        assert!((s.map(5.0) - 0.5).abs() < 1e-9);
+        assert!(s.map(15.0).is_nan());
+        assert!(s.map(-1.0).is_nan());
     }
 }
