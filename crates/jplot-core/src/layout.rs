@@ -62,11 +62,15 @@ enum KeyGlyph {
     Pch(i32, Color, Color), // shape, colour, fill
 }
 
-/// A legend guide: title + levels + per-level key glyphs.
+/// A legend guide: title + levels + per-level key glyphs, or a gradient bar.
 struct Guide {
     title: String,
     levels: Vec<String>,
     glyphs: Vec<KeyGlyph>,
+    /// continuous colour bar: (data_lo, data_hi, ramp low, ramp high)
+    bar: Option<(f64, f64, String, String)>,
+    /// bar guide: normalised tick positions (t of each level label)
+    bar_ticks: Vec<f64>,
 }
 
 /// Collect one guide per mapped discrete aesthetic (fill, colour, shape),
@@ -99,6 +103,25 @@ fn build_guides(bp: &BuiltPlot, ls: &TextStyle) -> Vec<Guide> {
     };
     for (aes, cs) in [("fill", &bp.fill_scale), ("colour", &bp.colour_scale)] {
         if let Some(cs) = cs {
+            if cs.levels.is_empty() && cs.data_hi != cs.data_lo {
+                // continuous colour: gradient bar guide (probe: bar h 79.2,
+                // block-centre span title_to_first + 63.3)
+                let (lo, hi) = (cs.data_lo, cs.data_hi);
+                let brk = crate::scale::extended_breaks(lo, hi, 5)
+                    .into_iter()
+                    .filter(|b| *b >= lo && *b <= hi)
+                    .collect::<Vec<_>>();
+                let levels = crate::scale::format_breaks(&brk);
+                let (a, b) = cs.ramp_hex();
+                let (a, b) = (a.to_string(), b.to_string());
+                guides.push(Guide {
+                    title: title_of(aes, cs.name.as_ref()),
+                    levels,
+                    glyphs: vec![],
+                    bar: Some((lo, hi, a, b)), bar_ticks: brk.iter().map(|b| (b - lo) / (hi - lo)).collect(),
+                });
+                continue;
+            }
             let glyphs = cs
                 .levels
                 .iter()
@@ -113,7 +136,7 @@ fn build_guides(bp: &BuiltPlot, ls: &TextStyle) -> Vec<Guide> {
                     }
                 })
                 .collect();
-            guides.push(Guide { title: title_of(aes, cs.name.as_ref()), levels: cs.levels.clone(), glyphs });
+            guides.push(Guide { title: title_of(aes, cs.name.as_ref()), levels: cs.levels.clone(), glyphs, bar: None, bar_ticks: vec![] });
         }
     }
     if let Some((levels, pchs)) = bp.shape_scale.as_ref() {
@@ -125,7 +148,7 @@ fn build_guides(bp: &BuiltPlot, ls: &TextStyle) -> Vec<Guide> {
             .unwrap_or(Color::black());
         let _ = ls;
         let glyphs = pchs.iter().map(|&s| KeyGlyph::Pch(s as i32, colour, colour)).collect();
-        guides.push(Guide { title: title_of("shape", None), levels: levels.clone(), glyphs });
+        guides.push(Guide { title: title_of("shape", None), levels: levels.clone(), glyphs, bar: None, bar_ticks: vec![] });
     }
     // continuous size / alpha guides: keys are default-point circles whose
     // radius (size) or fill-opacity (alpha) varies with the break value.
@@ -150,7 +173,7 @@ fn build_guides(bp: &BuiltPlot, ls: &TextStyle) -> Vec<Guide> {
                     }
                 })
                 .collect();
-            guides.push(Guide { title: ns.name.clone().unwrap_or_else(|| aes.into()), levels, glyphs });
+            guides.push(Guide { title: ns.name.clone().unwrap_or_else(|| aes.into()), levels, glyphs, bar: None, bar_ticks: vec![] });
         }
     }    // linetype guide: key = short line segment carrying the lty dash pattern
     if let Some((levels, lty)) = bp.linetype_scale.as_ref() {
@@ -164,7 +187,7 @@ fn build_guides(bp: &BuiltPlot, ls: &TextStyle) -> Vec<Guide> {
             .iter()
             .map(|t| KeyGlyph::SegmentD(crate::scene::dash_for(t, geom_lw(0.5)), colour))
             .collect();
-        guides.push(Guide { title: bp.guide_sources.get("linetype").cloned().unwrap_or_else(|| "linetype".into()), levels: levels.clone(), glyphs });
+        guides.push(Guide { title: bp.guide_sources.get("linetype").cloned().unwrap_or_else(|| "linetype".into()), levels: levels.clone(), glyphs, bar: None, bar_ticks: vec![] });
     }
 
     guides
@@ -1024,10 +1047,14 @@ fn draw_legends(sc: &mut Scene, guides: &[Guide], theme: &Theme, width: f64, vp:
 
     // vertical layout: first-title baseline centred on the panel middle so
     // the whole stack's baseline span is balanced (probe: +2.11 offset).
-    let total: f64 = guides
-        .iter()
-        .map(|g| title_to_first + (g.levels.len().max(1) as f64 - 1.0) * pitch)
-        .sum::<f64>()
+    let guide_h = |g: &Guide| -> f64 {
+        if g.bar.is_some() {
+            title_to_first + 63.3
+        } else {
+            title_to_first + (g.levels.len().max(1) as f64 - 1.0) * pitch
+        }
+    };
+    let total: f64 = guides.iter().map(guide_h).sum::<f64>()
         + inter * (guides.len().saturating_sub(1)) as f64;
     let mut title_bl = (vp.y0 + vp.y1) / 2.0 - total / 2.0 + 2.11;
 
@@ -1039,6 +1066,42 @@ fn draw_legends(sc: &mut Scene, guides: &[Guide], theme: &Theme, width: f64, vp:
             y: title_bl,
             style: ts.clone(),
         });
+        if let Some((lo, hi, a, b)) = &g.bar {
+            let bar_top = title_bl + 6.64;
+            let bar_h = 79.2;
+            let bar_w = 16.0;
+            let slices = 48usize;
+            for k in 0..slices {
+                let t = (k as f64 + 0.5) / slices as f64; // 0 bottom .. 1 top
+                let y = bar_top + bar_h * (1.0 - (k as f64 + 1.0) / slices as f64);
+                let hh = bar_h / slices as f64 + 0.05;
+                let col = crate::scale::lab_ramp(&a, &b, t);
+                sc.layer(layer::LEGEND).push(Primitive::Rect {
+                    x: key_cx - bar_w / 2.0,
+                    y,
+                    w: bar_w,
+                    h: hh,
+                    fill: Some(Paint::new(col)),
+                    stroke: None,
+                });
+            }
+            let _ = (lo, hi);
+            for (i, lvl) in g.levels.iter().enumerate() {
+                let t = match g.bar_ticks.get(i).copied() {
+                    Some(tv) => tv,
+                    None => continue,
+                };
+                let ty = bar_top + bar_h * (1.0 - t) + 3.1;
+                sc.layer(layer::LEGEND).push(Primitive::Text {
+                    content: lvl.clone(),
+                    x: label_left,
+                    y: ty,
+                    style: ls.clone(),
+                });
+            }
+            title_bl += guide_h(g) + inter;
+            continue;
+        }
         for (i, lvl) in g.levels.iter().enumerate() {
             let key_bl = title_bl + title_to_first + i as f64 * pitch;
             let cy = key_bl - 3.15;
@@ -1108,7 +1171,7 @@ fn draw_legends(sc: &mut Scene, guides: &[Guide], theme: &Theme, width: f64, vp:
                 style: ls.clone(),
             });
         }
-        title_bl += title_to_first + (g.levels.len().max(1) as f64 - 1.0) * pitch + inter;
+        title_bl += guide_h(g) + inter;
     }
 }
 
