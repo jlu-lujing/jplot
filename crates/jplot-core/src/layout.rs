@@ -378,6 +378,71 @@ fn draw_layer(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &Built
         GeomSpec::Vline => draw_vline(ops, l, bp, vp),
         GeomSpec::Text => draw_text(ops, l, bp, vp),
         GeomSpec::Area => draw_area(ops, l, bp, vp),
+        GeomSpec::Errorbar => draw_errorbar(ops, l, bp, vp),
+        GeomSpec::Ribbon => draw_ribbon(ops, l, bp, vp),
+    }
+}
+
+/// geom_errorbar: a vertical line from ymin to ymax at each x, with horizontal
+/// caps of width `width` (data units, default 0.9) at both ends.
+fn draw_errorbar(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
+    let xs = l.frame.get("x").cloned().unwrap_or_default();
+    let ymin = l.frame.get("ymin").cloned().unwrap_or_default();
+    let ymax = l.frame.get("ymax").cloned().unwrap_or_default();
+    let width = l.args.f64_("width").unwrap_or(0.9);
+    let lw = l.args.f64_("linewidth").map(geom_lw).unwrap_or(geom_lw(0.5));
+    let n = xs.len().min(ymin.len()).min(ymax.len());
+    for i in 0..n {
+        if !xs[i].is_finite() || !ymin[i].is_finite() || !ymax[i].is_finite() {
+            continue;
+        }
+        let (px, p0, p1) = (vp.map_x(&bp.x_scale, xs[i]), vp.map_y(&bp.y_scale, ymin[i]), vp.map_y(&bp.y_scale, ymax[i]));
+        let (cl, cr) = (vp.map_x(&bp.x_scale, xs[i] - width / 2.0), vp.map_x(&bp.x_scale, xs[i] + width / 2.0));
+        let c = point_colour_of(l, i, bp);
+        let ln = Line::solid(c, lw);
+        ops.push(Primitive::Segment { x1: px, y1: p0, x2: px, y2: p1, stroke: ln });
+        ops.push(Primitive::Segment { x1: cl, y1: p0, x2: cr, y2: p0, stroke: ln });
+        ops.push(Primitive::Segment { x1: cl, y1: p1, x2: cr, y2: p1, stroke: ln });
+    }
+}
+
+/// geom_ribbon: a filled band between ymin and ymax across x, per group.
+fn draw_ribbon(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
+    let xs = l.frame.get("x").cloned().unwrap_or_default();
+    let ymin = l.frame.get("ymin").cloned().unwrap_or_default();
+    let ymax = l.frame.get("ymax").cloned().unwrap_or_default();
+    let n_groups = l.group_ids.iter().cloned().max().map_or(0, |m| m + 1);
+    for g in 0..n_groups.max(1) {
+        let mut idx: Vec<usize> = (0..xs.len()).filter(|&i| n_groups <= 1 || l.group_ids.get(i) == Some(&g)).collect();
+        if idx.is_empty() {
+            continue;
+        }
+        let rep = idx[0];
+        idx.sort_by_key(|&i| (xs[i] * 1e6).round() as i64);
+        let top: Vec<(f64, f64)> = idx
+            .iter()
+            .filter(|&&i| i < ymax.len() && xs[i].is_finite() && ymax[i].is_finite())
+            .map(|&i| (vp.map_x(&bp.x_scale, xs[i]), vp.map_y(&bp.y_scale, ymax[i])))
+            .collect();
+        let bot: Vec<(f64, f64)> = idx
+            .iter()
+            .filter(|&&i| i < ymin.len() && xs[i].is_finite() && ymin[i].is_finite())
+            .rev()
+            .map(|&i| (vp.map_x(&bp.x_scale, xs[i]), vp.map_y(&bp.y_scale, ymin[i])))
+            .collect();
+        if top.len() < 2 {
+            continue;
+        }
+        let alpha = l.args.f64_("alpha").unwrap_or(1.0);
+        let c = if l.aes.contains_key("fill") || l.args.s("fill").is_some() {
+            fill_colour_of(l, rep, bp)
+        } else {
+            Color::rgb(51, 51, 51)
+        }
+        .with_alpha(alpha);
+        let mut poly = top;
+        poly.extend(bot);
+        ops.push(Primitive::Polyline { points: poly, stroke: None, fill: Some(Paint::new(c)), closed: true });
     }
 }
 
@@ -403,10 +468,12 @@ fn draw_text(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltP
         }
         let (px, py) = (vp.map_x(&bp.x_scale, xs[i]), vp.map_y(&bp.y_scale, ys[i]));
         let m = measure(&labels[i], &style);
-        // grid text justification: hjust=0 left edge at x, =1 right edge;
-        // vjust=0 box bottom (baseline-descent) at y, =1 box top (baseline+ascent) at y.
+        // grid text justification, probed from svglite geom_text(vjust=0/0.5/1):
+        // vjust=0 puts the baseline at the anchor, vjust=1 shifts it down by
+        // 0.716*size (the grid "text box" height for Arial at this size);
+        // hjust=0 left edge at x, =0.5 centred, =1 right edge at x.
         let x = px - hjust * m.width;
-        let baseline = py + (1.0 - vjust) * m.descent - vjust * m.ascent;
+        let baseline = py + vjust * 0.716 * size_px;
         ops.push(Primitive::Text { content: labels[i].clone(), x, y: baseline, style: style.clone() });
     }
 }

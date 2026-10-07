@@ -61,6 +61,10 @@ pub enum GeomSpec {
     Text,
     /// geom_area: filled area to y=0 (stacks by default)
     Area,
+    /// geom_errorbar: vertical line + caps at each x between ymin..ymax
+    Errorbar,
+    /// geom_ribbon: filled band between ymin..ymax per group
+    Ribbon,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

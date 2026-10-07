@@ -54,7 +54,9 @@ layer <- function(geom, ..., stat = NULL, position = list(kind = "identity"), ma
     hline = list(kind = "hline"),
     vline = list(kind = "vline"),
     text = list(kind = "text"),
-    area = list(kind = "area")
+    area = list(kind = "area"),
+    errorbar = list(kind = "errorbar"),
+    ribbon = list(kind = "ribbon")
   )
   list(geom = g, stat = stat, position = position,
        mapping = if (is.null(mapping)) list(map = list()) else list(map = mapping),
@@ -240,5 +242,15 @@ render("28_text", ggplot(dtext, aes(x, y, label = lab)) + geom_text())
 darea <- data.frame(x = 1:8, y = c(3, 5, 4, 6, 5, 7, 6, 8))
 save("29_area", spec(darea, list(x = "x", y = "y"), list(layer("area"))))
 render("29_area", ggplot(darea, aes(x, y)) + geom_area())
+
+## 30 errorbar (discrete x isolates the errorbar geometry) ------------------
+derr <- data.frame(x = factor(1:4), ymin = c(1, 2, 3, 4), ymax = c(3, 4, 5, 6))
+save("30_errorbar", spec(derr, list(x = "x", ymin = "ymin", ymax = "ymax"), list(layer("errorbar"))))
+render("30_errorbar", ggplot(derr, aes(x, ymin = ymin, ymax = ymax)) + geom_errorbar())
+
+## 31 ribbon ----------------------------------------------------------------
+drib <- data.frame(x = 1:6, ymin = c(1, 2, 1, 3, 2, 4), ymax = c(3, 4, 3, 5, 4, 6))
+save("31_ribbon", spec(drib, list(x = "x", ymin = "ymin", ymax = "ymax"), list(layer("ribbon"))))
+render("31_ribbon", ggplot(drib, aes(x, ymin = ymin, ymax = ymax)) + geom_ribbon())
 
 cat("exported", length(list.files("specs")), "specs + refs\n")

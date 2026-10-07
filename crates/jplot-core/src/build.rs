@@ -685,6 +685,7 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
                 }
             }
             GeomSpec::Point { .. } | GeomSpec::Line | GeomSpec::Step => {}
+            GeomSpec::Errorbar | GeomSpec::Ribbon => {}
             GeomSpec::Freqpoly { .. } => {
                 // ggplot2 StatBin + geom_freqpoly: extend the line to y=0 one
                 // bin-width beyond the outer bin centres.
