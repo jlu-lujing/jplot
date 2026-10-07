@@ -488,6 +488,39 @@ fn apply_position(
             f.set("xmin", new_xmin);
             f.set("xmax", new_xmax);
         }
+        PositionSpec::Stack => {
+            if f.get("y").is_none() {
+                return;
+            }
+            // pos_stack: for rows sharing an x, order by group and accumulate
+            // y from 0 (ggplot2: y = cumsum(count) within each x).
+            let xs = f.get("x").cloned().unwrap_or_default();
+            let ys = f.get("y").cloned().unwrap_or_default();
+            let groups = group_cols(f);
+            let gids = group_ids(f, &groups, level_order);
+            let mut new_ys = ys.clone();
+            let mut new_ymin = vec![0.0; ys.len()];
+            // process each distinct x independently
+            let mut seen: Vec<f64> = Vec::new();
+            for i in 0..xs.len() {
+                if seen.contains(&xs[i]) || !xs[i].is_finite() {
+                    continue;
+                }
+                seen.push(xs[i]);
+                let mut idx: Vec<usize> = (0..xs.len()).filter(|&j| (xs[j] - xs[i]).abs() < 1e-9).collect();
+                // ggplot2 pos_stack accumulates by DESCENDING group: the
+                // highest group id ends up on the bottom of the stack.
+                idx.sort_by(|&a, &b| gids[b].cmp(&gids[a]));
+                let mut cum = 0.0;
+                for &j in &idx {
+                    new_ymin[j] = cum;
+                    cum += ys[j];
+                    new_ys[j] = cum; // top = cumulative sum
+                }
+            }
+            f.set("y", new_ys);
+            f.set("ymin", new_ymin);
+        }
         PositionSpec::Jitter { width, height, seed } => {
             // deterministic LCG jitter, seed-dependent, ggplot2-ish spread:
             // uniform ±(w, h) * 0.5 scaled by 0.4? ggplot2: runif(2n, -w, h)/2?

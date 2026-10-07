@@ -103,6 +103,8 @@ pub enum PositionSpec {
     Dodge {
         width: f64,
     },
+    /// ggplot2 position_stack / "stack": bars at the same x accumulate.
+    Stack,
     Jitter {
         width: f64,
         height: f64,

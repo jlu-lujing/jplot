@@ -224,4 +224,9 @@ save("26_vline", spec(hp, list(x = "disp", y = "mpg"),
      list(layer("point"), layer("vline", args = list(xintercept = mean(hp$disp))))))
 render("26_vline", ggplot(hp, aes(disp, mpg)) + geom_point() + geom_vline(xintercept = mean(hp$disp), colour = "blue"))
 
+## 27 stacked bar ----------------------------------------------------------
+save("27_stack", spec(df, list(x = "cyl", fill = "vs"),
+     list(layer("bar", position = list(kind = "stack")))))
+render("27_stack", ggplot(df, aes(cyl, fill = vs)) + geom_bar(position = "stack"))
+
 cat("exported", length(list.files("specs")), "specs + refs\n")
