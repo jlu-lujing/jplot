@@ -350,7 +350,7 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
             }
             sc.layer(layer::AXES).push(Primitive::Segment { x1: vp.x0 - tick, y1: y, x2: vp.x0, y2: y, stroke: al.clone() });
             let st = TextStyle { halign: TextAlign::Right, ..label_style.clone() };
-            sc.layer(layer::AXES).push(Primitive::Text { content: lab.clone(), x: vp.x0 - tick - hl, y: y + 0.31 + 0.76 * st.size, style: st });
+            sc.layer(layer::AXES).push(Primitive::Text { content: lab.clone(), x: vp.x0 - tick - 2.2, y: y + 0.31 + 0.76 * st.size, style: st });
         }
         if !x_lab.is_empty() {
             // svglite: "disp" baseline = 472.20 (= height - 7.80), size 11, centred
