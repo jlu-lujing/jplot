@@ -65,6 +65,28 @@ pub enum GeomSpec {
     Errorbar,
     /// geom_ribbon: filled band between ymin..ymax per group
     Ribbon,
+    /// geom_segment: x,y -> xend,yend
+    Segment,
+    /// geom_path: line in data order (no x-sort)
+    Path,
+    /// geom_rect: xmin/xmax/ymin/ymax boxes
+    Rect,
+    /// geom_tile: centred rectangles (width/height from spacing)
+    Tile,
+    /// geom_linerange: vertical segment ymin..ymax (no caps)
+    Linerange,
+    /// geom_pointrange: linerange + point at y
+    Pointrange,
+    /// geom_crossbar: box ymin..ymax + median line + caps
+    Crossbar,
+    /// geom_errorbarh: horizontal errorbar (x = value, xmin..xmax at y)
+    Errorbarh,
+    /// geom_abline: y = slope*x + intercept
+    Abline,
+    /// geom_point with position jitter
+    Jitter,
+    /// geom_label: text with background box
+    Label,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

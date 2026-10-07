@@ -56,7 +56,16 @@ layer <- function(geom, ..., stat = NULL, position = list(kind = "identity"), ma
     text = list(kind = "text"),
     area = list(kind = "area"),
     errorbar = list(kind = "errorbar"),
-    ribbon = list(kind = "ribbon")
+    ribbon = list(kind = "ribbon"),
+    segment = list(kind = "segment"),
+    tile = list(kind = "tile"),
+    pointrange = list(kind = "pointrange"),
+    linerange = list(kind = "linerange"),
+    crossbar = list(kind = "crossbar"),
+    errorbarh = list(kind = "errorbarh"),
+    abline = list(kind = "abline"),
+    rect = list(kind = "rect"),
+    path = list(kind = "path")
   )
   list(geom = g, stat = stat, position = position,
        mapping = if (is.null(mapping)) list(map = list()) else list(map = mapping),
@@ -284,5 +293,26 @@ render("37_colour_cont", ggplot(df, aes(disp, mpg, colour = hp)) + geom_point())
 save("38_gradient", spec(df, list(x = "disp", y = "mpg", colour = "hp"), list(layer("point")),
      scales = list(colour = list(kind = "gradient", low = "#132B43", high = "#56B1F7"))))
 render("38_gradient", ggplot(df, aes(disp, mpg, colour = hp)) + geom_point() + scale_colour_gradient())
+
+## 39 segment ----------------------------------------------------------------
+dseg <- data.frame(x = c(1, 2, 3), y = c(1, 3, 2), xend = c(2, 3, 4), yend = c(3, 2, 4))
+save("39_segment", spec(dseg, list(x = "x", y = "y", xend = "xend", yend = "yend"), list(layer("segment"))))
+render("39_segment", ggplot(dseg, aes(x = x, y = y, xend = xend, yend = yend)) + geom_segment())
+
+## 40 tile -------------------------------------------------------------------
+dtile <- expand.grid(x = 1:5, y = 1:4)
+dtile$z <- as.numeric(dtile$x) * as.numeric(dtile$y)
+save("40_tile", spec(dtile, list(x = "x", y = "y"), list(layer("tile"))))
+render("40_tile", ggplot(dtile, aes(x, y)) + geom_tile())
+
+## 41 pointrange ---------------------------------------------------------------
+dpr <- data.frame(x = 1:4, y = c(2, 4, 3, 5), ymin = c(1, 3, 2, 4), ymax = c(3, 5, 4, 6))
+save("41_pointrange", spec(dpr, list(x = "x", y = "y", ymin = "ymin", ymax = "ymax"), list(layer("pointrange"))))
+render("41_pointrange", ggplot(dpr, aes(x, y, ymin = ymin, ymax = ymax)) + geom_pointrange())
+
+## 42 abline + errorbarh --------------------------------------------------------
+save("42_ablineh", spec(df, list(x = "disp", y = "mpg"),
+     list(layer("point"), layer("abline", args = list(intercept = 30, slope = -0.04)))))
+render("42_ablineh", ggplot(df, aes(disp, mpg)) + geom_point() + geom_abline(intercept = 30, slope = -0.04, colour = "red"))
 
 cat("exported", length(list.files("specs")), "specs + refs\n")

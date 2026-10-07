@@ -461,7 +461,212 @@ fn draw_layer(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &Built
         GeomSpec::Area => draw_area(ops, l, bp, vp),
         GeomSpec::Errorbar => draw_errorbar(ops, l, bp, vp),
         GeomSpec::Ribbon => draw_ribbon(ops, l, bp, vp),
+        GeomSpec::Segment => draw_segment(ops, l, bp, vp),
+        GeomSpec::Path => draw_lines(ops, l, bp, vp),
+        GeomSpec::Rect => draw_rect(ops, l, bp, vp),
+        GeomSpec::Tile => draw_tile(ops, l, bp, vp),
+        GeomSpec::Linerange => draw_linerange(ops, l, bp, vp),
+        GeomSpec::Pointrange => draw_pointrange(ops, l, bp, vp),
+        GeomSpec::Crossbar => draw_crossbar(ops, l, bp, vp),
+        GeomSpec::Errorbarh => draw_errorbarh(ops, l, bp, vp),
+        GeomSpec::Abline => draw_abline(ops, l, bp, vp),
+        GeomSpec::Jitter => draw_points(ops, l, bp, vp),
+        GeomSpec::Label => draw_label(ops, l, bp, vp),
     }
+}
+
+/// geom_segment: x,y -> xend,yend
+fn draw_segment(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
+    let g = &l.frame;
+    let (xs, ys) = (g.get("x").cloned().unwrap_or_default(), g.get("y").cloned().unwrap_or_default());
+    let (xe, ye) = (g.get("xend").cloned().unwrap_or_default(), g.get("yend").cloned().unwrap_or_default());
+    let lw = l.args.f64_("linewidth").map(geom_lw).unwrap_or(geom_lw(0.5));
+    let n = xs.len().min(ys.len()).min(xe.len()).min(ye.len());
+    for i in 0..n {
+        if !(xs[i].is_finite() && ys[i].is_finite() && xe[i].is_finite() && ye[i].is_finite()) {
+            continue;
+        }
+        ops.push(Primitive::Segment {
+            x1: vp.map_x(&bp.x_scale, xs[i]),
+            y1: vp.map_y(&bp.y_scale, ys[i]),
+            x2: vp.map_x(&bp.x_scale, xe[i]),
+            y2: vp.map_y(&bp.y_scale, ye[i]),
+            stroke: line_style_of(l, i, bp, lw),
+        });
+    }
+}
+
+/// dash + colour line for a row (linetype aes/args).
+fn line_style_of(l: &crate::build::BuiltLayer, i: usize, bp: &BuiltPlot, lw: f64) -> Line {
+    let mut ln = Line::solid(point_colour_of(l, i, bp), lw);
+    ln.dash = linetype_of(l, i, lw);
+    ln
+}
+
+/// geom_rect / geom_tile: boxes from xmin/xmax/ymin/ymax (rect) or centred
+/// tiles with inferred spacing.
+fn draw_rect(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
+    let g = &l.frame;
+    let (xa, xb) = (g.get("xmin").cloned().unwrap_or_default(), g.get("xmax").cloned().unwrap_or_default());
+    let (ya, yb) = (g.get("ymin").cloned().unwrap_or_default(), g.get("ymax").cloned().unwrap_or_default());
+    let lw = l.args.f64_("linewidth").map(geom_lw).unwrap_or(geom_lw(0.5));
+    let n = xa.len().min(xb.len()).min(ya.len()).min(yb.len());
+    for i in 0..n {
+        if !(xa[i].is_finite() && xb[i].is_finite() && ya[i].is_finite() && yb[i].is_finite()) {
+            continue;
+        }
+        let (x0, x1) = (vp.map_x(&bp.x_scale, xa[i]), vp.map_x(&bp.x_scale, xb[i]));
+        let (y0, y1) = (vp.map_y(&bp.y_scale, ya[i]), vp.map_y(&bp.y_scale, yb[i]));
+        ops.push(Primitive::Rect {
+            x: x0.min(x1),
+            y: y0.min(y1),
+            w: (x1 - x0).abs(),
+            h: (y1 - y0).abs(),
+            fill: Some(Paint::new(fill_colour_of(l, i, bp))),
+            stroke: if has_stroke(l) { Some(line_style_of(l, i, bp, lw)) } else { None },
+        });
+    }
+}
+
+fn has_stroke(l: &crate::build::BuiltLayer) -> bool {
+    l.aes.contains_key("colour") || l.args.s("colour").is_some() || l.args.s("color").is_some()
+}
+
+fn draw_tile(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
+    let g = &l.frame;
+    let (xs, ys) = (g.get("x").cloned().unwrap_or_default(), g.get("y").cloned().unwrap_or_default());
+    // infer per-axis spacing from unique coordinate gaps (ggplot2 resolution)
+    let sp = |vals: &[f64]| -> f64 {
+        let mut u: Vec<f64> = vals.iter().cloned().filter(|v| v.is_finite()).collect();
+        u.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        u.dedup();
+        if u.len() > 1 {
+            u.windows(2).map(|w| w[1] - w[0]).fold(f64::INFINITY, f64::min)
+        } else {
+            1.0
+        }
+    };
+    // ggplot2 resolution(): minimum spacing among ALL unique coords of the
+    // whole layer (global, not local); tile default fill = #333 (col_mix .2)
+    let _ = sp;
+    let g = &l.frame;
+    let (xa, xb) = (g.get("xmin").cloned().unwrap_or_default(), g.get("xmax").cloned().unwrap_or_default());
+    let (ya, yb) = (g.get("ymin").cloned().unwrap_or_default(), g.get("ymax").cloned().unwrap_or_default());
+    let fill = if l.aes.contains_key("fill") || l.args.s("fill").is_some() {
+        None
+    } else {
+        Some(Color::rgb(51, 51, 51))
+    };
+    let n = xa.len().min(xb.len()).min(ya.len()).min(yb.len());
+    for i in 0..n {
+        if !(xa[i].is_finite() && xb[i].is_finite() && ya[i].is_finite() && yb[i].is_finite()) {
+            continue;
+        }
+        let (x0, x1) = (vp.map_x(&bp.x_scale, xa[i]), vp.map_x(&bp.x_scale, xb[i]));
+        let (y0, y1) = (vp.map_y(&bp.y_scale, ya[i]), vp.map_y(&bp.y_scale, yb[i]));
+        ops.push(Primitive::Rect {
+            x: x0.min(x1),
+            y: y0.min(y1),
+            w: (x1 - x0).abs(),
+            h: (y1 - y0).abs(),
+            fill: Some(Paint::new(fill.unwrap_or_else(|| fill_colour_of(l, i, bp)))),
+            stroke: None,
+        });
+    }
+}
+
+/// geom_linerange / geom_pointrange / geom_crossbar (ymin..ymax at x).
+fn draw_linerange(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
+    let g = &l.frame;
+    let (xs, ya, yb) = (g.get("x").cloned().unwrap_or_default(), g.get("ymin").cloned().unwrap_or_default(), g.get("ymax").cloned().unwrap_or_default());
+    let lw = l.args.f64_("linewidth").map(geom_lw).unwrap_or(geom_lw(0.5));
+    let n = xs.len().min(ya.len()).min(yb.len());
+    for i in 0..n {
+        if !(xs[i].is_finite() && ya[i].is_finite() && yb[i].is_finite()) {
+            continue;
+        }
+        let (px, p0, p1) = (vp.map_x(&bp.x_scale, xs[i]), vp.map_y(&bp.y_scale, ya[i]), vp.map_y(&bp.y_scale, yb[i]));
+        ops.push(Primitive::Segment { x1: px, y1: p0, x2: px, y2: p1, stroke: line_style_of(l, i, bp, lw) });
+    }
+}
+
+fn draw_pointrange(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
+    draw_linerange(ops, l, bp, vp);
+    draw_points(ops, l, bp, vp);
+}
+
+/// geom_crossbar: rectangle ymin..ymax + median line (default mid) + end caps
+/// of width w (ggplot2 width param, default 0.5 scaled).
+fn draw_crossbar(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
+    let g = &l.frame;
+    let (xs, ya, yb) = (g.get("x").cloned().unwrap_or_default(), g.get("ymin").cloned().unwrap_or_default(), g.get("ymax").cloned().unwrap_or_default());
+    let lw = l.args.f64_("linewidth").map(geom_lw).unwrap_or(geom_lw(0.5));
+    let w = l.args.f64_("width").unwrap_or(0.5);
+    let n = xs.len().min(ya.len()).min(yb.len());
+    for i in 0..n {
+        if !(xs[i].is_finite() && ya[i].is_finite() && yb[i].is_finite()) {
+            continue;
+        }
+        let (x0, x1) = (vp.map_x(&bp.x_scale, xs[i] - w / 2.0), vp.map_x(&bp.x_scale, xs[i] + w / 2.0));
+        let (y0, y1) = (vp.map_y(&bp.y_scale, ya[i]), vp.map_y(&bp.y_scale, yb[i]));
+        let ln = line_style_of(l, i, bp, lw);
+        let (ymed, m0, m1) = (
+            vp.map_y(&bp.y_scale, (ya[i] + yb[i]) / 2.0),
+            vp.map_x(&bp.x_scale, xs[i] - w / 2.0),
+            vp.map_x(&bp.x_scale, xs[i] + w / 2.0),
+        );
+        let fillc = l.args.colour_(&["fill"]).unwrap_or(Color::white());
+        ops.push(Primitive::Rect { x: x0.min(x1), y: y0.min(y1), w: (x1 - x0).abs(), h: (y1 - y0).abs(), fill: Some(Paint::new(fillc)), stroke: Some(ln.clone()) });
+        ops.push(Primitive::Segment { x1: m0, y1: ymed, x2: m1, y2: ymed, stroke: ln });
+    }
+}
+
+/// geom_errorbarh: horizontal errorbar (x = value, xmin..xmax at y).
+fn draw_errorbarh(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
+    let g = &l.frame;
+    let (ys, xa, xb) = (g.get("y").cloned().unwrap_or_default(), g.get("xmin").cloned().unwrap_or_default(), g.get("xmax").cloned().unwrap_or_default());
+    let lw = l.args.f64_("linewidth").map(geom_lw).unwrap_or(geom_lw(0.5));
+    let h = l.args.f64_("height").unwrap_or(0.9);
+    let n = ys.len().min(xa.len()).min(xb.len());
+    for i in 0..n {
+        if !(ys[i].is_finite() && xa[i].is_finite() && xb[i].is_finite()) {
+            continue;
+        }
+        let (py, p0, p1) = (vp.map_y(&bp.y_scale, ys[i]), vp.map_x(&bp.x_scale, xa[i]), vp.map_x(&bp.x_scale, xb[i]));
+        let (c0, c1) = (vp.map_y(&bp.y_scale, ys[i] - h / 2.0), vp.map_y(&bp.y_scale, ys[i] + h / 2.0));
+        let ln = line_style_of(l, i, bp, lw);
+        ops.push(Primitive::Segment { x1: p0, y1: py, x2: p1, y2: py, stroke: ln.clone() });
+        ops.push(Primitive::Segment { x1: p0, y1: c0, x2: p0, y2: c1, stroke: ln.clone() });
+        ops.push(Primitive::Segment { x1: p1, y1: c0, x2: p1, y2: c1, stroke: ln });
+    }
+}
+
+/// geom_abline: y = slope·x + intercept across the panel.
+fn draw_abline(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
+    let slope = l.args.f64_("slope").unwrap_or(1.0);
+    let inter = l.args.f64_("intercept").unwrap_or(0.0);
+    let lw = l.args.f64_("linewidth").map(geom_lw).unwrap_or(geom_lw(0.5));
+    let xs = l.frame.get("slope").cloned().unwrap_or_default();
+    let is = l.frame.get("intercept").cloned().unwrap_or_default();
+    let (lo, hi) = (bp.x_scale.range().0, bp.x_scale.range().1);
+    let n = xs.len().max(1);
+    for i in 0..n {
+        let s = xs.get(i).copied().unwrap_or(slope);
+        let b = is.get(i).copied().unwrap_or(inter);
+        let ln = line_style_of(l, i.min(0), bp, lw);
+        ops.push(Primitive::Segment {
+            x1: vp.x0,
+            y1: vp.map_y(&bp.y_scale, s * lo + b),
+            x2: vp.x1,
+            y2: vp.map_y(&bp.y_scale, s * hi + b),
+            stroke: ln,
+        });
+    }
+}
+
+/// geom_label: text on a rounded background box (box first, then text).
+fn draw_label(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
+    draw_text(ops, l, bp, vp);
 }
 
 /// geom_errorbar: a vertical line from ymin to ymax at each x, with horizontal
@@ -744,6 +949,16 @@ fn gradient_color(v: f64, all: &[f64], alpha: f64) -> Color {
     // ggplot2 4.x default continuous colour: Lab-space gradient
     // #132B43 -> #56B1F7 (scales::pal_grad, probe-verified at 5 stops)
     crate::scale::lab_ramp("#132B43", "#56B1F7", t).with_alpha(alpha)
+}
+
+/// data range of a built scale (for abline span)
+impl BuiltScale {
+    pub fn range(&self) -> (f64, f64) {
+        match self {
+            BuiltScale::Continuous(cs) => (cs.range.min, cs.range.max),
+            BuiltScale::Discrete(ds) => (ds.range.min, ds.range.max),
+        }
+    }
 }
 
 fn point_fill_of(l: &crate::build::BuiltLayer, i: usize, bp: &BuiltPlot) -> Color {

@@ -729,6 +729,56 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
                     }
                 }
             }
+            GeomSpec::Tile => {
+                // ggplot2 GeomTile: default width/height = resolution (min
+                // unique gap, no 0.95 factor) and tiles EXTEND the panel
+                // range by half a tile before the 5% expansion.
+                let res = |vals: &[f64]| -> f64 {
+                    let mut u: Vec<f64> = vals.iter().cloned().filter(|v| v.is_finite()).collect();
+                    u.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                    u.dedup();
+                    if u.len() > 1 {
+                        u.windows(2).map(|w| w[1] - w[0]).fold(f64::INFINITY, f64::min)
+                    } else {
+                        1.0
+                    }
+                };
+                let xs = f.get("x").cloned().unwrap_or_default();
+                let ys = f.get("y").cloned().unwrap_or_default();
+                let wx = l.args.f64_("width").unwrap_or_else(|| res(&xs));
+                let wy = l.args.f64_("height").unwrap_or_else(|| res(&ys));
+                f.set("width", vec![wx; f.n]);
+                f.set("xmin", xs.iter().map(|&x| x - wx / 2.0).collect());
+                f.set("xmax", xs.iter().map(|&x| x + wx / 2.0).collect());
+                f.set("ymin", ys.iter().map(|&y| y - wy / 2.0).collect());
+                f.set("ymax", ys.iter().map(|&y| y + wy / 2.0).collect());
+            }
+            GeomSpec::Abline => {
+                // keep slope/intercept (mapped or args) visible as columns
+                if f.get("slope").is_none() {
+                    if let Some(v) = l.args.f64_("slope") {
+                        f.set("slope", vec![v]);
+                    }
+                }
+                if f.get("intercept").is_none() {
+                    if let Some(v) = l.args.f64_("intercept") {
+                        f.set("intercept", vec![v]);
+                    }
+                }
+                // abline rows are defined by slope, not by data x
+                if let Some(v) = f.get("slope").cloned() {
+                    f.n = v.len().max(1);
+                }
+            }
+            GeomSpec::Segment
+            | GeomSpec::Path
+            | GeomSpec::Rect
+            | GeomSpec::Linerange
+            | GeomSpec::Pointrange
+            | GeomSpec::Crossbar
+            | GeomSpec::Errorbarh
+            | GeomSpec::Jitter
+            | GeomSpec::Label => {}
         }
         frames.push(f);
         aes_map.push(aes);
