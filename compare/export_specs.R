@@ -276,4 +276,13 @@ dlt <- transform(dlt, x = rep(1:10, 3), y = rep(1:10, 3), l = rep(c("a", "b", "c
 save("36_linetype", spec(dlt, list(x = "x", y = "y", linetype = "l"), list(layer("line"))))
 render("36_linetype", ggplot(dlt, aes(x, y, linetype = l)) + geom_line())
 
+## 37 continuous colour (Lab gradient) ---------------------------------------
+save("37_colour_cont", spec(df, list(x = "disp", y = "mpg", colour = "hp"), list(layer("point"))))
+render("37_colour_cont", ggplot(df, aes(disp, mpg, colour = hp)) + geom_point())
+
+## 38 continuous colour with gradient scale -----------------------------------
+save("38_gradient", spec(df, list(x = "disp", y = "mpg", colour = "hp"), list(layer("point")),
+     scales = list(colour = list(kind = "gradient", low = "#132B43", high = "#56B1F7"))))
+render("38_gradient", ggplot(df, aes(disp, mpg, colour = hp)) + geom_point() + scale_colour_gradient())
+
 cat("exported", length(list.files("specs")), "specs + refs\n")

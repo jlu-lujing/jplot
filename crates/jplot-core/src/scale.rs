@@ -144,6 +144,61 @@ pub fn hcl_to_rgb(h: f64, c: f64, l: f64) -> Color {
 }
 
 // ---------------------------------------------------------------------------
+// CIE Lab (D65) — scales::pal_grad space="Lab" for continuous colour scales
+// ---------------------------------------------------------------------------
+
+const D65: [f64; 3] = [0.95047, 1.0, 1.08883];
+
+fn lin8(v: f64) -> f64 {
+    if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+}
+fn delin8(v: f64) -> f64 {
+    if v <= 0.0031308 { 12.92 * v } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 }
+}
+fn labf(t: f64) -> f64 {
+    if t > 216.0 / 24389.0 { t.cbrt() } else { 841.0 / 108.0 * t + 4.0 / 29.0 }
+}
+fn labfi(t: f64) -> f64 {
+    if t > 6.0 / 29.0 { t * t * t } else { (t - 4.0 / 29.0) * 108.0 / 841.0 }
+}
+
+/// sRGB → CIE Lab (D65).
+pub fn rgb_to_lab(r: u8, g: u8, b: u8) -> [f64; 3] {
+    let (rl, gl, bl) = (lin8(r as f64 / 255.0), lin8(g as f64 / 255.0), lin8(b as f64 / 255.0));
+    let x = 0.4124564 * rl + 0.3575761 * gl + 0.1804375 * bl;
+    let y = 0.2126729 * rl + 0.7151522 * gl + 0.0721750 * bl;
+    let z = 0.0193339 * rl + 0.1191920 * gl + 0.9503041 * bl;
+    let (fx, fy, fz) = (labf(x / D65[0]), labf(y / D65[1]), labf(z / D65[2]));
+    [116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz)]
+}
+
+/// CIE Lab (D65) → sRGB, clamped with R-style rounding.
+pub fn lab_to_rgb(lab: [f64; 3]) -> Color {
+    let [l, a, bb] = lab;
+    let fy = (l + 16.0) / 116.0;
+    let fx = a / 500.0 + fy;
+    let fz = fy - bb / 200.0;
+    let x = D65[0] * labfi(fx);
+    let y = D65[1] * if l > 7.999592 { labfi(fy) } else { l / 903.3 };
+    let z = D65[2] * labfi(fz);
+    let r = 3.2404542 * x - 1.5371385 * y - 0.4985314 * z;
+    let g = -0.9692660 * x + 1.8760108 * y + 0.0415560 * z;
+    let b = 0.0556434 * x - 0.2040259 * y + 1.0572252 * z;
+    let q = |v: f64| ((delin8(v.clamp(0.0, 1.0)) * 255.0 + 0.5) as i32).clamp(0, 255) as u8;
+    Color::rgb(q(r), q(g), q(b))
+}
+
+/// Lab-space interpolation between two sRGB hex colours (scales::pal_grad).
+pub fn lab_ramp(hex_lo: &str, hex_hi: &str, t: f64) -> Color {
+    let lo = Color::parse(hex_lo).unwrap_or(Color::black());
+    let hi = Color::parse(hex_hi).unwrap_or(Color::white());
+    let a = rgb_to_lab(lo.r, lo.g, lo.b);
+    let b = rgb_to_lab(hi.r, hi.g, hi.b);
+    let t = t.clamp(0.0, 1.0);
+    lab_to_rgb([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t])
+}
+
+// ---------------------------------------------------------------------------
 // Palettes
 // ---------------------------------------------------------------------------
 
@@ -1013,6 +1068,11 @@ pub struct DiscreteColourScale {
     pub levels: Vec<String>,
     pub colours: Vec<Color>,
     pub name: Option<String>,
+    /// continuous form (colour mapped to a numeric column): data range +
+    /// ramp endpoints (Lab-interpolated at draw time)
+    pub data_lo: f64,
+    pub data_hi: f64,
+    pub ramp: Option<(String, String)>,
 }
 
 impl DiscreteColourScale {
@@ -1036,6 +1096,20 @@ impl DiscreteColourScale {
             levels,
             colours,
             name,
+            data_lo: 0.0,
+            data_hi: 1.0,
+            ramp: match spec {
+                ScaleSpec::Gradient { low, high, .. } => Some((low.clone(), high.clone())),
+                _ => None,
+            },
+        }
+    }
+    /// continuous ramp endpoints: explicit scale colours or the default
+    /// ggplot2 Lab gradient (#132B43 → #56B1F7, scales::pal_grad probe-verified)
+    pub fn ramp_hex(&self) -> (&str, &str) {
+        match &self.ramp {
+            Some((a, b)) => (a.as_str(), b.as_str()),
+            None => ("#132B43", "#56B1F7"),
         }
     }
     pub fn map(&self, level: &str) -> Color {
@@ -1159,6 +1233,18 @@ mod tests {
         assert!((t.inverse(2.0) - 100.0).abs() < 1e-9);
         assert!(t.transform(-5.0).is_nan());
         assert!(t.transform(0.0).is_nan());
+    }
+
+    #[test]
+    fn lab_ramp_matches_scales_pal_grad() {
+        // R: scale_colour_gradient breaks map 0/.25/.5/.75/1 ->
+        // #132B43 #22496C #336A98 #448DC6 #56B1F7 (Lab space)
+        let c = |t| crate::scale::lab_ramp("#132B43", "#56B1F7", t);
+        assert_eq!(c(0.0).to_hex().to_uppercase(), "#132B43");
+        assert_eq!(c(0.25).to_hex().to_uppercase(), "#22496C");
+        assert_eq!(c(0.5).to_hex().to_uppercase(), "#336A98");
+        assert_eq!(c(0.75).to_hex().to_uppercase(), "#448DC6");
+        assert_eq!(c(1.0).to_hex().to_uppercase(), "#56B1F7");
     }
 
     #[test]

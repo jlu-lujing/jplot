@@ -834,8 +834,22 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
             order_levels(&mut levels, declared.as_ref());
             Some(DiscreteColourScale::train(levels, &spec))
         } else if cont_vals.len() > 1 {
-            // continuous colour: gradient spec; default endpoints
-            Some(DiscreteColourScale::train(vec![], &spec))
+            // continuous colour: ramp scale over the data range
+            let mut s = DiscreteColourScale::train(vec![], &spec);
+            let lo = cont_vals.iter().cloned().fold(f64::INFINITY, f64::min);
+            let hi = cont_vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            s.data_lo = lo;
+            s.data_hi = hi;
+            // explicit scale limits override the data range (ggplot2 oob→na.value,
+            // here clamped into the ramp)
+            if let crate::scale::ScaleSpec::Continuous { limits, name, .. } = &spec {
+                if let Some([a, b]) = limits {
+                    s.data_lo = *a;
+                    s.data_hi = *b;
+                }
+                s.name = name.clone();
+            }
+            Some(s)
         } else {
             None
         }

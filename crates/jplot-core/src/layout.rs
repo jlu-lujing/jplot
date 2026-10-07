@@ -680,7 +680,15 @@ fn point_colour_of(l: &crate::build::BuiltLayer, i: usize, bp: &BuiltPlot) -> Co
             }
             if let Some(vals) = l.frame.get("colour") {
                 if i < vals.len() {
-                    return gradient_color(vals[i], vals, alpha);
+                    // continuous colour ramp from the scale (gradient default;
+                    // manual colours/limits override)
+                    let (a, b) = cs.ramp_hex();
+                    let t = if cs.data_hi == cs.data_lo {
+                        0.5
+                    } else {
+                        ((vals[i] - cs.data_lo) / (cs.data_hi - cs.data_lo)).clamp(0.0, 1.0)
+                    };
+                    return crate::scale::lab_ramp(a, b, t).with_alpha(alpha);
                 }
             }
         }
@@ -710,10 +718,9 @@ fn gradient_color(v: f64, all: &[f64], alpha: f64) -> Color {
     let lo = all.iter().cloned().fold(f64::INFINITY, f64::min);
     let hi = all.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
     let t = if hi == lo { 0.5 } else { ((v - lo) / (hi - lo)).clamp(0.0, 1.0) };
-    let (r0, g0, b0) = (68u8, 1u8, 84u8);
-    let (r1, g1, b1) = (253u8, 231u8, 37u8);
-    let m = |a: u8, b: u8| (a as f64 + (b as f64 - a as f64) * t).round() as u8;
-    Color::rgb(m(r0, r1), m(g0, g1), m(b0, b1)).with_alpha(alpha)
+    // ggplot2 4.x default continuous colour: Lab-space gradient
+    // #132B43 -> #56B1F7 (scales::pal_grad, probe-verified at 5 stops)
+    crate::scale::lab_ramp("#132B43", "#56B1F7", t).with_alpha(alpha)
 }
 
 fn point_fill_of(l: &crate::build::BuiltLayer, i: usize, bp: &BuiltPlot) -> Color {
