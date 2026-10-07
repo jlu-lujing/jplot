@@ -447,6 +447,19 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
         guides::draw_legends(&mut sc, &guides, &theme, width, &vp);
     }
 
+    // Final pass: pin EVERY text element to our Helvetica-metric advance
+    // (svglite writes textLength from R stringWidth; resvg honours it, so
+    // pinning makes rasterised glyph advances identical — the last source
+    // of residual text-edge noise).
+    for lyr in &mut sc.layers {
+        for p in &mut lyr.primitives {
+            if let Primitive::Text { content, style, text_length, .. } = p {
+                if text_length.is_none() {
+                    *text_length = Some(crate::text::measure(content, style).width);
+                }
+            }
+        }
+    }
     sc
 }
 

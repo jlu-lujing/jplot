@@ -114,9 +114,10 @@ fn ols(pts: &[(f64, f64)]) -> Option<(Vec<f64>, f64, Vec<Vec<f64>>)> {
 /// loess local fit at target x0 (degree 2, tricube over span·maxdist).
 /// Returns (fitted, se) or None on singular fits (dropped like R NaN).
 fn loess_at(pts: &[(f64, f64)], x0: f64, span: f64, deg: usize) -> Option<(f64, f64)> {
-    // R semantics: degree 2, bandwidth = distance to the k-th nearest
-    // neighbour (k = ceil(span·n), NOT span×maxdist), tricube weights, then
-    // IRLS reweighting (symmetric cubic-bisquare family, R `iter = 4`).
+    // R semantics: degree 2 (R 4.4 loess default), bandwidth = distance to
+    // the k-th nearest neighbour (k = ceil(span·n)) with tricube weights.
+    // NO IRLS: ggplot2's stat_loess matches gaussian family (probe: deg2 +
+    // no-robustness reproduces ggplot2 fit & se to rmse 0).
     let n = pts.len();
     let k = ((span * n as f64).ceil() as usize).clamp(deg + 2, n);
     let mut dsorted: Vec<f64> = pts.iter().map(|(x, _)| (x - x0).abs()).collect();
@@ -128,55 +129,33 @@ fn loess_at(pts: &[(f64, f64)], x0: f64, span: f64, deg: usize) -> Option<(f64, 
     let dim = deg + 1;
     let yv: Vec<f64> = pts.iter().map(|(_, y)| *y).collect();
     let dxv: Vec<f64> = pts.iter().map(|(x, _)| x - x0).collect();
-    let base_w: Vec<f64> = dxv.iter().map(|dx| tricube(dx.abs() / h)).collect();
-    let mut w = base_w.clone();
-    let mut beta = vec![0.0; dim];
+    let w: Vec<f64> = dxv.iter().map(|dx| tricube(dx.abs() / h)).collect();
     let mut xtx = vec![vec![0.0; dim]; dim];
-    for _ in 0..4 {
-        xtx = vec![vec![0.0; dim]; dim];
-        let mut xty = vec![0.0; dim];
-        for i in 0..n {
-            if w[i] == 0.0 {
-                continue;
-            }
-            let dx = dxv[i];
-            let mut row = vec![0.0; dim];
-            for j in 0..dim {
-                row[j] = dx.powi(j as i32) * w[i];
-            }
-            for j in 0..dim {
-                for l in 0..dim {
-                    xtx[j][l] += row[j] * dx.powi(l as i32);
-                }
-            }
-            for j in 0..dim {
-                xty[j] += row[j] * yv[i];
+    let mut xty = vec![0.0; dim];
+    for i in 0..n {
+        if w[i] == 0.0 {
+            continue;
+        }
+        let dx = dxv[i];
+        let mut row = vec![0.0; dim];
+        for j in 0..dim {
+            row[j] = dx.powi(j as i32) * w[i];
+        }
+        for j in 0..dim {
+            for l in 0..dim {
+                xtx[j][l] += row[j] * dx.powi(l as i32);
             }
         }
-        let mut aug = xtx.clone();
-        let rhs = xty.clone();
-        for r in 0..dim {
-            aug[r].push(rhs[r]);
-        }
-        let mut r0 = xty.clone();
-        beta = solve3(&mut aug, &mut r0)?;
-        // symmetric-family reweight: cubic-bisquare of scaled residuals
-        let pred: Vec<f64> = dxv
-            .iter()
-            .map(|dx| (0..dim).map(|j| beta[j] * dx.powi(j as i32)).sum())
-            .collect();
-        let mut res: Vec<f64> = (0..n).map(|i| (yv[i] - pred[i]).abs()).collect();
-        res.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let s = (4.685016 * res[res.len() / 2]).max(1e-12);
-        for i in 0..n {
-            let u = (yv[i] - pred[i]) / s;
-            w[i] = if u.abs() >= 1.0 {
-                0.0
-            } else {
-                base_w[i] * (1.0 - u * u * u).powi(2)
-            };
+        for j in 0..dim {
+            xty[j] += row[j] * yv[i];
         }
     }
+    let mut aug = xtx.clone();
+    for r in 0..dim {
+        aug[r].push(xty[r]);
+    }
+    let mut rhs = xty.clone();
+    let beta = solve3(&mut aug, &mut rhs)?;
     // residual scale (summary.loess): σ² = Σw·e²·(S−1)/(Σw·(S−3)),
     // S = (Σw)²/Σw²
     let pred: Vec<f64> = dxv

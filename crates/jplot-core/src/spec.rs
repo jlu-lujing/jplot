@@ -107,6 +107,11 @@ pub enum StatSpec {
     },
     Bin {
         bins: usize,
+        /// freqpoly semantics: R's stat_bin emits ONE zero-count outer bin on
+        /// each side (probe 24: 12 rows = 10 data bins + y=0 at min−w and
+        /// max+w), so the polygon closes on the axis.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        extend: bool,
         /// optional explicit bin edges
         #[serde(default, skip_serializing_if = "Option::is_none")]
         breaks: Option<Vec<f64>>,
