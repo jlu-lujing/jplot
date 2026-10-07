@@ -525,6 +525,8 @@ pub struct BuiltPlot {
     pub y_scale: BuiltScale,
     pub colour_scale: Option<DiscreteColourScale>,
     pub fill_scale: Option<DiscreteColourScale>,
+    /// discrete shape scale: (levels, their pch codes). None when no shape aes.
+    pub shape_scale: Option<(Vec<String>, Vec<f64>)>,
     /// aes name mapped on the plot/layer ("colour"/"fill") → the data column
     /// (R variable name) it maps from, e.g. colour -> "g". ggplot2 uses it as
     /// the default guide title when no scale name is set.
@@ -755,6 +757,53 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
     colour_scale = train_colour("colour");
     fill_scale = train_colour("fill");
 
+    // shape aesthetic: collect level order across layers that map `shape`;
+    // the level index maps to geom_defaults::SHAPE_SEQ at draw time (R's
+    // solid_seq_pal default order is {16,17,15,3,7,8}, max 6 values).
+    let shape_levels: Option<Vec<String>> = {
+        let mut levels: Vec<String> = Vec::new();
+        let mut declared: Option<Vec<String>> = None;
+        for (f, amap) in frames.iter().zip(aes_map.iter()) {
+            if !amap.contains_key("shape") {
+                continue;
+            }
+            if let Some(v) = f.col("shape") {
+                for s in v.iter().filter(|s| !s.is_empty()) {
+                    if !levels.iter().any(|l| l == s) {
+                        levels.push(s.clone());
+                    }
+                }
+            }
+            if declared.is_none() {
+                declared = f.levels.get("shape").cloned();
+            }
+        }
+        if levels.is_empty() {
+            None
+        } else {
+            order_levels(&mut levels, declared.as_ref());
+            Some(levels)
+        }
+    };
+    // materialise a numeric `shape` column so draw_points can read it
+    if let Some(levels) = &shape_levels {
+        for f in &mut frames {
+            if let Some(cats) = f.col("shape").cloned() {
+                let vals: Vec<f64> = cats
+                    .iter()
+                    .map(|c| {
+                        levels
+                            .iter()
+                            .position(|l| l == c)
+                            .and_then(|i| crate::theme::geom_defaults::SHAPE_SEQ.get(i).copied())
+                            .unwrap_or(19.0)
+                    })
+                    .collect();
+                f.set("shape", vals);
+            }
+        }
+    }
+
     let mut level_order: HashMap<&'static str, Vec<String>> = HashMap::new();
     if let Some(BuiltScale::Discrete(d)) = &x_scale {
         level_order.insert("x", d.levels.clone());
@@ -861,6 +910,14 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
         y_scale: y_scale.unwrap(),
         colour_scale,
         fill_scale,
+        shape_scale: shape_levels.map(|l| {
+            let pchs: Vec<f64> = l
+                .iter()
+                .enumerate()
+                .map(|(i, _)| crate::theme::geom_defaults::SHAPE_SEQ.get(i).copied().unwrap_or(19.0))
+                .collect();
+            (l, pchs)
+        }),
         guide_sources,
         aes_defaults: HashMap::new(),
         plot: spec.clone(),

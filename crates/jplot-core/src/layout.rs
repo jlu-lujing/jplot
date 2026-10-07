@@ -34,6 +34,84 @@ impl Viewport {
     }
 }
 
+/// One legend key glyph: the mark drawn next to a level label, mirroring
+/// ggplot2's per-geom `draw_key_*`.
+#[derive(Debug, Clone)]
+enum KeyGlyph {
+    Circle(Color),
+    Segment(Color),
+    Rect(Color),
+    Pch(i32, Color, Color), // shape, colour, fill
+}
+
+/// A legend guide: title + levels + per-level key glyphs.
+struct Guide {
+    title: String,
+    levels: Vec<String>,
+    glyphs: Vec<KeyGlyph>,
+}
+
+/// Collect one guide per mapped discrete aesthetic (fill, colour, shape),
+/// using ggplot2's guide order (fill, colour, shape).
+fn build_guides(bp: &BuiltPlot, ls: &TextStyle) -> Vec<Guide> {
+    let mut guides: Vec<Guide> = Vec::new();
+    let title_of = |aes: &str, name: Option<&String>| {
+        bp.plot
+            .labels
+            .guides
+            .get(aes)
+            .or(name)
+            .or(bp.guide_sources.get(aes))
+            .cloned()
+            .unwrap_or_else(|| aes.to_string())
+    };
+    let key_is_line = |aes: &str| {
+        bp.layers
+            .iter()
+            .find(|l| l.aes.contains_key(aes))
+            .map(|l| matches!(l.geom, crate::spec::GeomSpec::Line))
+            .unwrap_or(false)
+    };
+    let key_is_bar = |aes: &str| {
+        bp.layers
+            .iter()
+            .find(|l| l.aes.contains_key(aes))
+            .map(|l| matches!(l.geom, crate::spec::GeomSpec::Col | crate::spec::GeomSpec::Bar | crate::spec::GeomSpec::Histogram { .. }))
+            .unwrap_or(false)
+    };
+    for (aes, cs) in [("fill", &bp.fill_scale), ("colour", &bp.colour_scale)] {
+        if let Some(cs) = cs {
+            let glyphs = cs
+                .levels
+                .iter()
+                .map(|l| {
+                    let c = cs.map(l);
+                    if key_is_line(aes) {
+                        KeyGlyph::Segment(c)
+                    } else if key_is_bar(aes) || aes == "fill" {
+                        KeyGlyph::Rect(c)
+                    } else {
+                        KeyGlyph::Circle(c)
+                    }
+                })
+                .collect();
+            guides.push(Guide { title: title_of(aes, cs.name.as_ref()), levels: cs.levels.clone(), glyphs });
+        }
+    }
+    if let Some((levels, pchs)) = bp.shape_scale.as_ref() {
+        let colour = bp
+            .layers
+            .iter()
+            .find(|l| l.aes.contains_key("shape"))
+            .and_then(|l| l.args.colour_(&["colour", "color"]))
+            .unwrap_or(Color::black());
+        let _ = ls;
+        let glyphs = pchs.iter().map(|&s| KeyGlyph::Pch(s as i32, colour, colour)).collect();
+        guides.push(Guide { title: title_of("shape", None), levels: levels.clone(), glyphs });
+    }
+    guides
+}
+
 pub fn layout(bp: &BuiltPlot) -> Scene {
     let spec = &bp.plot;
     let theme = Theme::new(crate::theme::ThemeKind::Grey);
@@ -88,24 +166,19 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
     }
     let mut right = 5.48;
     let legend_width;
+    let guides: Vec<Guide> = build_guides(bp, &label_style);
     {
-        if let Some(cs) = bp.colour_scale.as_ref().or(bp.fill_scale.as_ref()) {
-            let title = bp
-                .plot
-                .labels
-                .guides
-                .get(if bp.fill_scale.as_ref().map(|s| std::ptr::eq(s, cs)).unwrap_or(false) { "fill" } else { "colour" })
-                .or(cs.name.as_ref())
-                .cloned()
-                .unwrap_or_default();
-            let ts = TextStyle { size: theme.base_size, ..label_style.clone() };
-            // title centred over key column (width 16) -> may overhang left by half its width
-            let title_gap = measure(&title, &ts).width / 2.0 - 16.0 / 2.0 + 5.12;
-            let title_gap = title_gap.max(0.0);
-            let maxlabel = cs
-                .levels
+        if !guides.is_empty() {
+            // all guides share one column; width sized by the widest label
+            let maxlabel = guides
                 .iter()
+                .flat_map(|g| g.levels.iter())
                 .map(|l| measure(l, &label_style).width)
+                .fold(0.0f64, f64::max);
+            let ts = TextStyle { size: theme.base_size, ..label_style.clone() };
+            let title_gap = guides
+                .iter()
+                .map(|g| measure(&g.title, &ts).width / 2.0 - 16.0 / 2.0 + 5.12)
                 .fold(0.0f64, f64::max);
             legend_width = 16.0 + 7.1 + maxlabel + 9.17;
             right += legend_width.max(title_gap) + 10.96;
@@ -232,8 +305,8 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
     }
 
     // --- legend --------------------------------------------------------------
-    if let Some(cs) = bp.colour_scale.as_ref().or(bp.fill_scale.as_ref()) {
-        draw_legend(&mut sc, bp, cs, &theme, width, &vp);
+    if !guides.is_empty() {
+        draw_legends(&mut sc, &guides, &theme, width, &vp);
     }
 
     sc
@@ -352,23 +425,81 @@ fn gradient_color(v: f64, all: &[f64], alpha: f64) -> Color {
     Color::rgb(m(r0, r1), m(g0, g1), m(b0, b1)).with_alpha(alpha)
 }
 
+fn point_fill_of(l: &crate::build::BuiltLayer, i: usize, bp: &BuiltPlot) -> Color {
+    let alpha = l.args.f64_("alpha").unwrap_or(1.0);
+    if let Some(c) = l.args.colour_(&["fill"]) {
+        return c.with_alpha(alpha);
+    }
+    if l.aes.contains_key("fill") {
+        if let Some(cs) = &bp.fill_scale {
+            if let Some(vals) = l.frame.cat.get("fill") {
+                if i < vals.len() && !vals[i].is_empty() {
+                    return cs.map(&vals[i]).with_alpha(alpha);
+                }
+            }
+        }
+    }
+    // ggplot2 default fill aesthetic is NA → transparent interior
+    Color::transparent()
+}
+
+/// Push one pch glyph centred at (cx,cy). `r` = outer radius (size-derived,
+/// including half the border stroke), `stk` = border width px.
+/// shapes: 0 square, 1 circle, 2 tri, 3 plus, 4 cross, 5 diamond (all hollow
+/// stroke=col); 15 sq,16 cir,17 tri,18 diamond solid(fill=col); 19 cir,20 small
+/// cir solid; 21 cir,22 sq,23 dia,24 tri-up,25 tri-down fillable(fill=fill,stroke=col).
+fn push_glyph(ops: &mut Vec<Primitive>, shape: i32, cx: f64, cy: f64, r: f64, stk: f64, col: Color, fill: Color) {
+    let fillable = (21..=25).contains(&shape);
+    let solid = (15..=20).contains(&shape);
+    let interior = if fillable { fill } else if solid { col } else { Color::transparent() };
+    let border = if solid { Color::transparent() } else { col };
+    let stroke = Line::solid(border, stk);
+    let tri_up = |rr: f64| vec![(cx, cy - 1.556 * rr), (cx - 1.348 * rr, cy + 0.777 * rr), (cx + 1.348 * rr, cy + 0.777 * rr)];
+    let tri_dn = |rr: f64| vec![(cx, cy + 1.556 * rr), (cx - 1.348 * rr, cy - 0.777 * rr), (cx + 1.348 * rr, cy - 0.777 * rr)];
+    match shape {
+        0 | 15 | 22 => ops.push(Primitive::Rect { x: cx - r, y: cy - r, w: 2.0 * r, h: 2.0 * r, fill: if interior.a == 0.0 { None } else { Some(Paint::new(interior)) }, stroke: if border.a == 0.0 { None } else { Some(stroke) } }),
+        20 => ops.push(Primitive::Circle { cx, cy, r: r * 2.0 / 3.0, fill: Some(Paint::new(col)), stroke: None }),
+        s if matches!(s, 1 | 16 | 19 | 21) => ops.push(Primitive::Circle { cx, cy, r, fill: if interior.a == 0.0 { None } else { Some(Paint::new(interior)) }, stroke: if border.a == 0.0 { None } else { Some(stroke) } }),
+        2 | 17 | 24 => ops.push(Primitive::Polyline { points: tri_up(r), stroke: if border.a == 0.0 { None } else { Some(stroke) }, fill: if interior.a == 0.0 { None } else { Some(Paint::new(interior)) }, closed: true }),
+        25 => ops.push(Primitive::Polyline { points: tri_dn(r), stroke: Some(stroke), fill: if interior.a == 0.0 { None } else { Some(Paint::new(interior)) }, closed: true }),
+        5 | 18 | 23 => ops.push(Primitive::Polyline { points: vec![(cx, cy - r), (cx + r, cy), (cx, cy + r), (cx - r, cy)], stroke: if border.a == 0.0 { None } else { Some(stroke) }, fill: if interior.a == 0.0 { None } else { Some(Paint::new(interior)) }, closed: true }),
+        3 => {
+            let a = 1.414 * r;
+            ops.push(Primitive::Segment { x1: cx - a, y1: cy, x2: cx + a, y2: cy, stroke });
+            ops.push(Primitive::Segment { x1: cx, y1: cy - a, x2: cx, y2: cy + a, stroke: Line::solid(border, stk) });
+        }
+        4 | 8 => {
+            let a = 1.414 * r * 0.7071;
+            ops.push(Primitive::Segment { x1: cx - a, y1: cy - a, x2: cx + a, y2: cy + a, stroke: Line::solid(border, stk) });
+            ops.push(Primitive::Segment { x1: cx - a, y1: cy + a, x2: cx + a, y2: cy - a, stroke: Line::solid(border, stk) });
+            if shape == 8 {
+                let b = 1.414 * r;
+                ops.push(Primitive::Segment { x1: cx - b, y1: cy, x2: cx + b, y2: cy, stroke: Line::solid(border, stk) });
+                ops.push(Primitive::Segment { x1: cx, y1: cy - b, x2: cx, y2: cy + b, stroke: Line::solid(border, stk) });
+            }
+        }
+        // default: solid circle (theme pointshape 19)
+        _ => ops.push(Primitive::Circle { cx, cy, r, fill: Some(Paint::new(col)), stroke: None }),
+    }
+}
+
 fn draw_points(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
-    let r = l.args.f64_("size").map(point_r_px).unwrap_or(geom_defaults::point_size_px(11.0) * 0.5);
+    let size = l.args.f64_("size").unwrap_or(1.5);
+    let stroke = l.args.f64_("stroke").unwrap_or(0.5);
+    let r = point_r_px(size) + point_stroke(stroke) * 0.5;
+    let stk = point_stroke(stroke);
+    let default_shape = l.args.f64_("shape").unwrap_or(19.0) as i32;
     let (xs, ys) = (l.frame.get("x").cloned().unwrap_or_default(), l.frame.get("y").cloned().unwrap_or_default());
+    let shapes = l.frame.get("shape").cloned();
     for i in 0..xs.len().min(ys.len()) {
         if !xs[i].is_finite() || !ys[i].is_finite() {
             continue;
         }
+        let shape = shapes.as_ref().and_then(|v| v.get(i).copied()).map(|s| s as i32).unwrap_or(default_shape);
         let c = point_colour_of(l, i, bp);
-        // ggplot2 default shape 19: solid fill; svglite inherits the global
-        // circle stroke (width 0.71) in the fill colour → r+0.355 visual radius.
-        ops.push(Primitive::Circle {
-            cx: vp.map_x(&bp.x_scale, xs[i]),
-            cy: vp.map_y(&bp.y_scale, ys[i]),
-            r,
-            fill: Some(Paint::new(c)),
-            stroke: Some(Line::solid(c, point_stroke(0.5))),
-        });
+        let f = point_fill_of(l, i, bp);
+        let (cx, cy) = (vp.map_x(&bp.x_scale, xs[i]), vp.map_y(&bp.y_scale, ys[i]));
+        push_glyph(ops, shape, cx, cy, r, stk, c, f);
     }
 }
 
@@ -559,93 +690,98 @@ fn draw_boxplot(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &Bui
 // Legend
 // ---------------------------------------------------------------------------
 
-fn draw_legend(sc: &mut Scene, bp: &BuiltPlot, cs: &crate::scale::DiscreteColourScale, theme: &Theme, width: f64, vp: &Viewport) {
-    // Geometry probed from ggplot2 4.0.3 cairo refs:
-    //   content right edge ≈ 720 - 5.48 - 5.48; keys 16px wide; label gap 7.1;
-    //   vertical: block centred on panel middle; title centred over key column.
-    let aes = if bp.fill_scale.as_ref().map(|s| std::ptr::eq(s, cs)).unwrap_or(false) { "fill" } else { "colour" };
+/// Stacked guide blocks (fill → colour → shape). Geometry probed from
+/// ggplot2 4.0.3 svglite refs:
+///   single guide: title bl 204.43, keys 222.14/237.98/253.82
+///   (title→first key 17.7, pitch 15.84); two guides: last key→next title 35.8;
+///   key label baseline = key centre + 3.15; label column right-aligned at
+///   width - 10.96; title centred over the key column.
+fn draw_legends(sc: &mut Scene, guides: &[Guide], theme: &Theme, width: f64, vp: &Viewport) {
     let ls = TextStyle { size: theme.small_text(), color: Color::black(), halign: TextAlign::Left, ..Default::default() };
+    let ts = TextStyle { size: theme.base_size, color: Color::black(), halign: TextAlign::Left, ..Default::default() };
     let key_w = 16.0;
-    let key_pitch = 17.0;
-    let title_h = ls.size;
-    let gap = 7.1;
-    let maxlabel = cs.levels.iter().map(|l| measure(l, &ls).width).fold(0.0f64, f64::max);
+    let pitch = 15.84;
+    let title_to_first = 17.7;
+    let inter = 35.8;
     let right_edge = width - 5.48 - 5.48;
-    let label_left = right_edge - maxlabel;
-    let key_left = label_left - gap - key_w;
-    let title = bp
-        .plot
-        .labels
-        .guides
-        .get(aes)
-        .or(cs.name.as_ref())
-        .or(bp.guide_sources.get(aes))
-        .cloned()
-        .unwrap_or_else(|| aes.to_string());
-    // ggplot2 legend.title: rel(1) of base = 11pt, plain, black
-    let tstyle = TextStyle {
-        size: theme.base_size,
-        color: Color::black(),
-        ..ls.clone()
-    };
-    let n = cs.levels.len().max(1);
-    let block_h = title_h + 4.0 + (n as f64) * key_pitch;
-    let block_top = (vp.y0 + vp.y1) / 2.0 - block_h / 2.0;
-    // title centred over the key column
-    let tm = measure(&title, &tstyle);
-    let tcx = key_left + key_w / 2.0;
-    sc.layer(layer::LEGEND).push(Primitive::Text {
-        content: title,
-        x: tcx - tm.width / 2.0,
-        y: block_top + 0.76 * tstyle.size + 1.6,
-        style: tstyle,
-    });
-    let keys_top = block_top + title_h + 4.0;
-    let is_fill = aes == "fill";
-    // ggplot2 uses each geom's own draw_key: line→segment, bar/col/hist→rect,
-    // point→circle. Pick the glyph from the layer that maps this aesthetic.
-    let key_is_line = bp
-        .layers
+    let maxlabel = guides
         .iter()
-        .find(|l| l.aes.contains_key(aes))
-        .map(|l| matches!(l.geom, crate::spec::GeomSpec::Line))
-        .unwrap_or(false);
-    for (i, lvl) in cs.levels.iter().enumerate() {
-        let cy = keys_top + i as f64 * key_pitch + key_pitch / 2.0 - 0.5;
-        if key_is_line && !is_fill {
-            // geom_line/path: a horizontal segment across the key box
-            sc.layer(layer::LEGEND).push(Primitive::Segment {
-                x1: key_left,
-                y1: cy,
-                x2: key_left + key_w,
-                y2: cy,
-                stroke: Line::solid(cs.map(lvl), geom_lw(0.5)),
-            });
-        } else if is_fill {
-            sc.layer(layer::LEGEND).push(Primitive::Rect {
-                x: key_left,
-                y: keys_top + i as f64 * key_pitch,
-                w: key_w,
-                h: 16.0,
-                fill: Some(Paint::new(cs.map(lvl))),
-                stroke: None,
-            });
-        } else {
-            sc.layer(layer::LEGEND).push(Primitive::Circle {
-                cx: key_left + key_w / 2.0,
-                cy,
-                r: geom_defaults::point_size_px(11.0) * 0.5,
-                fill: Some(Paint::new(cs.map(lvl))),
-                stroke: None,
+        .flat_map(|g| g.levels.iter())
+        .map(|l| measure(l, &ls).width)
+        .fold(0.0f64, f64::max);
+    let label_left = right_edge - maxlabel;
+    let key_left = label_left - 7.1 - key_w;
+    let key_cx = key_left + key_w / 2.0;
+
+    // vertical layout: first-title baseline centred on the panel middle so
+    // the whole stack's baseline span is balanced (probe: +2.11 offset).
+    let total: f64 = guides
+        .iter()
+        .map(|g| title_to_first + (g.levels.len().max(1) as f64 - 1.0) * pitch)
+        .sum::<f64>()
+        + inter * (guides.len().saturating_sub(1)) as f64;
+    let mut title_bl = (vp.y0 + vp.y1) / 2.0 - total / 2.0 + 2.11;
+
+    for g in guides {
+        let tm = measure(&g.title, &ts);
+        sc.layer(layer::LEGEND).push(Primitive::Text {
+            content: g.title.clone(),
+            x: key_cx - tm.width / 2.0,
+            y: title_bl,
+            style: ts.clone(),
+        });
+        for (i, lvl) in g.levels.iter().enumerate() {
+            let key_bl = title_bl + title_to_first + i as f64 * pitch;
+            let cy = key_bl - 3.15;
+            let r = geom_defaults::point_r_px(1.5);
+            match &g.glyphs[i] {
+                KeyGlyph::Segment(c) => sc.layer(layer::LEGEND).push(Primitive::Segment {
+                    x1: key_left,
+                    y1: cy,
+                    x2: key_left + key_w,
+                    y2: cy,
+                    stroke: Line::solid(*c, geom_lw(0.5)),
+                }),
+                KeyGlyph::Rect(c) => sc.layer(layer::LEGEND).push(Primitive::Rect {
+                    x: key_left,
+                    y: cy - 8.0,
+                    w: key_w,
+                    h: 16.0,
+                    fill: Some(Paint::new(*c)),
+                    stroke: None,
+                }),
+                KeyGlyph::Circle(c) => sc.layer(layer::LEGEND).push(Primitive::Circle {
+                    cx: key_cx,
+                    cy,
+                    r,
+                    fill: Some(Paint::new(*c)),
+                    stroke: Some(Line::solid(*c, point_stroke(0.5))),
+                }),
+                KeyGlyph::Pch(s, c, f) => {
+                    let mut glyph: Vec<Primitive> = Vec::new();
+                    push_glyph(
+                        &mut glyph,
+                        *s,
+                        key_cx,
+                        cy,
+                        r + point_stroke(0.5) * 0.5,
+                        point_stroke(0.5),
+                        *c,
+                        *f,
+                    );
+                    for p in glyph {
+                        sc.layer(layer::LEGEND).push(p);
+                    }
+                }
+            }
+            sc.layer(layer::LEGEND).push(Primitive::Text {
+                content: lvl.clone(),
+                x: label_left,
+                y: key_bl,
+                style: ls.clone(),
             });
         }
-        // svglite: label baseline = key centre + 2.94 (230.06 vs 227.12)
-        sc.layer(layer::LEGEND).push(Primitive::Text {
-            content: lvl.clone(),
-            x: label_left,
-            y: cy + 0.76 * ls.size - ls.size / 2.0 + 2.0,
-            style: ls.clone(),
-        });
+        title_bl += title_to_first + (g.levels.len().max(1) as f64 - 1.0) * pitch + inter;
     }
 }
 

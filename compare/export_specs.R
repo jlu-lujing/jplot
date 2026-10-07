@@ -186,4 +186,19 @@ render("18_hist_center", ggplot(df, aes(mpg)) + geom_histogram(bins = 10, center
 save("19_hist_bins", spec(df, list(x = "mpg"), list(layer("histogram", args = list(bins = 8)))))
 render("19_hist_bins", ggplot(df, aes(mpg)) + geom_histogram(bins = 8))
 
+## 20 scatter with shape mapping (default discrete shape seq) --------------
+save("20_shape", spec(df, list(x = "disp", y = "mpg", shape = "cyl"), list(layer("point"))))
+render("20_shape", ggplot(df, aes(disp, mpg, shape = cyl)) + geom_point())
+
+## 21 point params: shape/fill/size/stroke ---------------------------------
+save("21_point_params", spec(df, list(x = "disp", y = "mpg"), list(layer("point",
+  args = list(shape = 21, fill = "cyan", colour = "red", size = 3, stroke = 1.5)))))
+render("21_point_params", ggplot(df, aes(disp, mpg)) + geom_point(
+  shape = 21, fill = "cyan", colour = "red", size = 3, stroke = 1.5))
+
+## 22 hollow shape (pch 1) --------------------------------------------------
+save("22_shape1", spec(df, list(x = "disp", y = "mpg"), list(layer("point",
+  args = list(shape = 1)))))
+render("22_shape1", ggplot(df, aes(disp, mpg)) + geom_point(shape = 1))
+
 cat("exported", length(list.files("specs")), "specs + refs\n")

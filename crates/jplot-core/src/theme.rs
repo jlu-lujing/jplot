@@ -143,10 +143,16 @@ pub mod geom_defaults {
     /// .pt <- 72.27 / 25.4 ; .stroke <- 96 / 25.4
     pub const PT_PER_MM: f64 = 72.27 / 25.4;
     pub const STROKE_RATIO: f64 = (96.0 / 25.4) / PT_PER_MM; // 96/72.27
-    /// ggplot2 point `size` is MILLIMETRES; svglite r for size=1.5mm is 1.95px.
+    /// ggplot2 point `size` is MILLIMETRES; svglite nominal glyph radius:
+    /// r_px = 1.0667 * size_mm (probe: 1.5→1.6+0.35=1.95, 8→8.53+0.35=8.89).
+    /// The DRAWN radius adds half the stroke width (see draw_points).
     pub fn point_r_px(size_mm: f64) -> f64 {
-        size_mm * 1.3
+        size_mm * 16.0 / 15.0
     }
+    /// ggplot2 default discrete shape sequence (solid_seq_pal): the first
+    /// shapes in scales' `seq_pal` order for hollow/filled pchs.
+    pub const SHAPE_SEQ: [f64; 18] =
+        [16.0, 17.0, 15.0, 3.0, 7.0, 8.0, 4.0, 12.0, 13.0, 14.0, 10.0, 11.0, 5.0, 1.0, 2.0, 0.0, 6.0, 9.0];
     /// default point size (mm) = pointsize rel(1.5) of base 11 → 1.5mm.
     pub fn default_size_mm(base_size: f64) -> f64 {
         (base_size / 11.0) * 1.5
