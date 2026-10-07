@@ -1,4 +1,5 @@
 pub mod aes_registry;
+pub mod breaks;
 pub mod build;
 pub mod color;
 pub mod data;
