@@ -6,7 +6,7 @@ use jplot_core::scene::{Layer, Primitive, Scene, TextAlign};
 use jplot_core::scale::Color;
 use jplot_core::text::{measure, TextMetrics};
 
-const FONT_STACK: &str = "Helvetica, Arial, sans-serif";
+const FONT_STACK: &str = "Arial, Helvetica, sans-serif";
 
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -148,13 +148,40 @@ fn draw_primitive(o: &mut String, p: &Primitive) {
 #[cfg(feature = "png")]
 pub fn to_png(scene: &Scene, scale: f64) -> Result<Vec<u8>, String> {
     let svg = to_svg(scene);
-    let mut opt = usvg::Options::default();
+    svg_to_png(&svg, scale)
+}
+
+/// Shared font database so to_png / svg_to_png / any caller agree.
+#[cfg(feature = "png")]
+pub fn font_database() -> usvg::fontdb::Database {
     let mut db = usvg::fontdb::Database::new();
+    for p in [
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/System/Library/Fonts/Supplemental/Helvetica.ttc",
+        "/usr/share/fonts/truetype/ghostscript/nimbus-sans-regular.ttc",
+        "/usr/share/fonts/truetype/urw-base35/NimbusSans-Regular.ttc",
+    ] {
+        if std::path::Path::new(p).exists() {
+            db.load_font_file(p).ok();
+        }
+    }
     db.load_system_fonts();
-    opt.fontdb = std::sync::Arc::new(db);
-    opt.font_family = "Helvetica".into();
+    db
+}
+
+/// Rasterise an arbitrary SVG string with the SAME font database as `to_png`.
+/// Used by the comparison pipeline so the ggplot2 reference (svglite) and
+/// jplot output go through one identical rasteriser — otherwise glyph
+/// antialiasing differences between R's cairo and ours drown out geometry.
+#[cfg(feature = "png")]
+pub fn svg_to_png(svg: &str, scale: f64) -> Result<Vec<u8>, String> {
+    let mut opt = usvg::Options::default();
+    opt.fontdb = std::sync::Arc::new(font_database());
+    opt.font_family = "Arial".into();
     opt.font_size = 11.0;
-    let tree = usvg::Tree::from_str(&svg, &opt).map_err(|e| format!("usvg: {e}"))?;
+    let tree = usvg::Tree::from_str(svg, &opt).map_err(|e| format!("usvg: {e}"))?;
     let size = tree.size();
     let target_w = (size.width() * scale as f32).round() as u32;
     let target_h = (size.height() * scale as f32).round() as u32;

@@ -116,12 +116,19 @@ impl Theme {
 
 /// Default geom constants from ggplot2 source (refs/ggplot2/R/geom-*.R).
 pub mod geom_defaults {
+    /// ggplot2 linewidth/size unit is MILLIMETRES; cairo @72dpi draws
+    /// pt=1px and 1mm = 72.27/25.4 pt (ggplot2's internal .pt constant).
+    pub fn mm_to_px(v_mm: f64) -> f64 {
+        v_mm * 72.27 / 25.4
+    }
     /// .pt <- 72.27 / 25.4 ; .stroke <- 96 / 25.4
     pub const PT_PER_MM: f64 = 72.27 / 25.4;
     pub const STROKE_RATIO: f64 = (96.0 / 25.4) / PT_PER_MM; // 96/72.27
-    /// point size = (base/11) * 1.5 pt → px = pt / 0.75
+    /// ggplot2 point `size` is in MILLIMETRES: 1.5mm at 72dpi device
+    /// (R cairo uses 72.27pt/inch; grid points size = pointsize/72 inch)
+    /// → diameter_px = size_mm/25.4 * 72 ≈ 4.25px for the default 1.5.
     pub fn point_size_px(base_size: f64) -> f64 {
-        ((base_size / 11.0) * 1.5) / 0.75
+        ((base_size / 11.0) * 1.5) / 25.4 * 72.0
     }
     /// border width = base_line_size = base/22 pt → px
     pub fn border_width_px(base_size: f64) -> f64 {

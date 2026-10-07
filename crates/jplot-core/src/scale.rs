@@ -480,14 +480,17 @@ impl ContinuousScale {
                 max: limits.max + half,
             };
         }
-        let breaks = breaks.unwrap_or_else(|| extended_breaks(limits.min, limits.max, 5));
-        let labels = labels.unwrap_or_else(|| breaks.iter().map(|b| format_break(*b)).collect());
         // ggplot2 4.x expand_range: symmetric mul/add on both ends
         // (probe: 0..14 → -0.7..14.7).
         let mut range = limits;
         let w = range.max - range.min;
         range.min -= w * expand[0] + expand[1];
         range.max += w * expand[0] + expand[1];
+        // breaks are computed by extended() on the EXPANDED range, then
+        // clipped to range (probes: dodge y limits 0..12 → breaks on
+        // -0.6..12.6 → 0,2.5,…,12.5).
+        let breaks = breaks.unwrap_or_else(|| extended_breaks(range.min, range.max, 5));
+        let labels = labels.unwrap_or_else(|| breaks.iter().map(|b| format_break(*b)).collect());
         ContinuousScale {
             limits,
             range,

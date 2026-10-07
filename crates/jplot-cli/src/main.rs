@@ -4,8 +4,12 @@ use jplot_core::spec::PlotSpec;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
+    if args.len() >= 2 && args[1] == "render-svg" {
+        return render_svg_cmd(&args);
+    }
     if args.len() < 3 || args[1] != "render" {
         eprintln!("usage: jplot render <spec.json> [-o out.(svg|png)] [--scale f]");
+        eprintln!("   or: jplot render-svg <in.svg> -o <out.png> [--scale f]");
         return ExitCode::from(2);
     }
     let spec_path = &args[2];
@@ -38,6 +42,50 @@ fn main() -> ExitCode {
         }
     };
     run(&spec, out.as_deref(), spec_path, scale)
+}
+
+fn render_svg_cmd(args: &[String]) -> ExitCode {
+    if args.len() < 3 {
+        eprintln!("usage: jplot render-svg <in.svg> -o <out.png>");
+        return ExitCode::from(2);
+    }
+    let svg_path = &args[2];
+    let mut out: Option<String> = None;
+    let mut scale = 1.0;
+    let mut i = 3;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-o" => {
+                i += 1;
+                out = args.get(i).cloned();
+            }
+            "--scale" => {
+                i += 1;
+                scale = args.get(i).and_then(|s| s.parse().ok()).unwrap_or(1.0);
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    let svg = std::fs::read_to_string(svg_path).unwrap_or_else(|e| {
+        eprintln!("cannot read {svg_path}: {e}");
+        std::process::exit(2)
+    });
+    let out = out.unwrap_or_else(|| svg_path.replace(".svg", ".png"));
+    match jplot_render::svg_to_png(&svg, scale) {
+        Ok(png) => {
+            if let Err(e) = std::fs::write(&out, png) {
+                eprintln!("write {out}: {e}");
+                return ExitCode::from(1);
+            }
+            eprintln!("wrote {out}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("rasterise failed: {e}");
+            ExitCode::from(1)
+        }
+    }
 }
 
 fn run(spec: &PlotSpec, out: Option<&str>, spec_path: &str, scale: f64) -> ExitCode {

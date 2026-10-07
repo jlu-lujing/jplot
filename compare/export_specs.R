@@ -3,6 +3,14 @@
 # Refs rendered at 72 dpi: width=720/72 in, height=480/72 in.
 suppressMessages(library(ggplot2))
 
+# resolve paths relative to this script, so cwd is irrelevant
+.here <- tryCatch({
+  .a <- commandArgs(FALSE)
+  .f <- .a[grepl("^--file=", .a)][1]
+  dirname(normalizePath(sub("^--file=", "", .f)))
+}, error = function(e) NULL)
+if (!is.null(.here)) setwd(.here)
+
 dir.create("specs", showWarnings = FALSE)
 dir.create("refs", showWarnings = FALSE)
 dir.create("ours", showWarnings = FALSE)
@@ -50,12 +58,28 @@ save <- function(name, sp) {
   jsonlite::write_json(sp, file.path("specs", paste0(name, ".json")), auto_unbox = TRUE, digits = 10, null = "null", empty_object = TRUE)
 }
 render <- function(name, p) {
+  # SVG via svglite → rasterised by jplot's own resvg in the compare step, so
+  # reference and jplot share ONE rasteriser + ONE font face (font differences
+  # would otherwise swamp geometry differences).
+  svgf <- file.path("refs", paste0(name, ".svg"))
+  svglite(svgf, width = 720/72, height = 480/72, pointsize = 11)
+  print(p)
+  invisible(dev.off())
+  # svglite writes width='720.00pt' → resvg reads pt at 96dpi (960px), which
+  # mismatches our 720px canvas; and its default round linecap fattens short
+  # strokes vs ggplot2's cairo butt caps. Normalise both so resvg reproduces
+  # the exact ggplot2 cairo geometry.
+  svg_txt <- readLines(svgf, warn = FALSE)
+  svg_txt <- gsub("([0-9.]+)pt'", "\\1'", svg_txt)
+  svg_txt <- gsub("stroke-linecap: round", "stroke-linecap: butt", svg_txt, fixed = TRUE)
+  writeLines(svg_txt, svgf)
   png(file.path("refs", paste0(name, ".png")), width = 720, height = 480, res = 72, type = "cairo")
   print(p)
   invisible(dev.off())
 }
 
 suppressMessages(library(jsonlite))
+suppressMessages(library(svglite))
 
 df <- mtcars
 df$cyl <- factor(df$cyl)

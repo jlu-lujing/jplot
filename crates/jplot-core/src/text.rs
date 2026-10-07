@@ -24,16 +24,23 @@ impl TextMetrics {
 
 fn char_advance(ch: char) -> f64 {
     // Adobe Helvetica (Nimbus Sans) metrics /1000 em.
+    // Arial (Helvetica-compatible) advances /1000 em — this is BOTH the face
+    // resvg renders (svg font-family: Arial, svglite's default family) and
+    // the face ggplot2's cairo uses (its "sans" maps to Nimbus Sans =
+    // Helvetica metrics). Layout metrics MUST match the rasteriser face or
+    // gutters mis-size.
     match ch {
         ' ' => 0.278,
-        '.' | ',' | ':' | ';' | '\'' => 0.278,
+        '.' | ',' | ':' | ';' => 0.278,
+        '\'' => 0.222,
         '!' | '|' => 0.278,
-        '(' | ')' | '/' => 0.333,
+        '(' | ')' => 0.333,
+        '/' => 0.278,
         '-' => 0.333,
         '+' | '=' | '<' | '>' => 0.584,
         'i' | 'l' | 'j' => 0.222,
-        'f' | 't' => 0.278,
-        'r' | '{' | '}' => 0.333,
+        'f' | 't' | 'r' => 0.333,
+        '{' | '}' | '[' | ']' => 0.333,
         'm' => 0.833,
         'w' => 0.5,
         'M' => 0.833,
@@ -42,7 +49,6 @@ fn char_advance(ch: char) -> f64 {
         'J' => 0.5,
         'L' => 0.556,
         'T' => 0.611,
-        '1' => 0.556,
         ch if ch.is_ascii_digit() => 0.556,
         ch if ch.is_ascii_uppercase() => 0.667,
         ch if ch.is_ascii_lowercase() => 0.556,

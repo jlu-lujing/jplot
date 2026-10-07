@@ -230,7 +230,7 @@ fn scales_spec_de<'de, D: serde::Deserializer<'de>>(d: D) -> Result<ScalesSpec, 
 }
 
 /// The complete plot: what `ggplot2::ggplotGrob` consumes, serialised.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlotSpec {
     #[serde(default)]
     pub data: Dataset,
@@ -255,6 +255,21 @@ fn default_width() -> f64 {
 }
 fn default_height() -> f64 {
     480.0
+}
+
+impl Default for PlotSpec {
+    fn default() -> Self {
+        PlotSpec {
+            data: Dataset::default(),
+            mapping: AesSpec::default(),
+            layers: Vec::new(),
+            scales: ScalesSpec::default(),
+            labels: LabelsSpec::default(),
+            theme: ThemeSpec::default(),
+            width: default_width(),
+            height: default_height(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
