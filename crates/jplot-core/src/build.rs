@@ -150,7 +150,7 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
     }
     let base = Frame::from_dataset(&spec.data)?;
     // house theme drives default palettes for unmapped scales
-    let theme = crate::theme::Theme::new(spec.theme.kind());
+    let theme = spec.theme.resolve();
 
     // 1. resolve per-layer frames
     let mut frames: Vec<Frame> = Vec::new();

@@ -4,6 +4,7 @@
 //! (see compare/calibrate.R).
 
 use crate::scale::Color;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ThemeKind {
@@ -15,6 +16,42 @@ pub enum ThemeKind {
     /// palette, viridis continuous ramp, horizontal-only light gridlines,
     /// black axis text — modern scientific-figure conventions.
     Jplot,
+}
+
+/// ggplot2 `legend.position`.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum LegendPos {
+    #[default]
+    Right,
+    Left,
+    Top,
+    Bottom,
+    None,
+}
+
+/// `element_text(...)` overrides; `None` = inherit (ggplot2 inheritance).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct TextOverride {
+    pub size: Option<f64>,
+    pub colour: Option<Color>,
+    pub bold: bool,
+    pub angle: Option<f64>,
+    pub hjust: Option<f64>,
+    pub vjust: Option<f64>,
+}
+
+impl TextOverride {
+    /// merge `self` on top of `base` (self wins where set)
+    pub fn merged(&self, base: &TextOverride) -> TextOverride {
+        TextOverride {
+            size: self.size.or(base.size),
+            colour: self.colour.or(base.colour),
+            bold: self.bold || base.bold,
+            angle: self.angle.or(base.angle),
+            hjust: self.hjust.or(base.hjust),
+            vjust: self.vjust.or(base.vjust),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -46,6 +83,15 @@ pub struct Theme {
     pub tick_length_pt: f64,
     pub ink: Color,
     pub paper: Color,
+    // --- theme() overrides (ggplot2 element names; None/default = inherit) --
+    pub axis_ticks_visible: bool,
+    pub legend_pos: LegendPos,
+    pub text: TextOverride,
+    pub axis_text_ov: TextOverride,
+    pub axis_title_ov: TextOverride,
+    pub title_ov: TextOverride,
+    pub strip_bg: Option<Color>,
+    pub plot_bg: Option<Color>,
 }
 
 impl Theme {
@@ -73,6 +119,14 @@ impl Theme {
                 tick_length_pt: 2.75, // rel(0.5) * half_line
                 ink,
                 paper,
+                axis_ticks_visible: true,
+                legend_pos: LegendPos::Right,
+                text: TextOverride::default(),
+                axis_text_ov: TextOverride::default(),
+                axis_title_ov: TextOverride::default(),
+                title_ov: TextOverride::default(),
+                strip_bg: None,
+                plot_bg: None,
             },
             ThemeKind::Bw => Theme {
                 kind,
@@ -91,6 +145,14 @@ impl Theme {
                 tick_length_pt: 2.75,
                 ink,
                 paper,
+                axis_ticks_visible: true,
+                legend_pos: LegendPos::Right,
+                text: TextOverride::default(),
+                axis_text_ov: TextOverride::default(),
+                axis_title_ov: TextOverride::default(),
+                title_ov: TextOverride::default(),
+                strip_bg: None,
+                plot_bg: None,
             },
             ThemeKind::Minimal => Theme {
                 kind,
@@ -109,6 +171,14 @@ impl Theme {
                 tick_length_pt: 2.75,
                 ink,
                 paper,
+                axis_ticks_visible: true,
+                legend_pos: LegendPos::Right,
+                text: TextOverride::default(),
+                axis_text_ov: TextOverride::default(),
+                axis_title_ov: TextOverride::default(),
+                title_ov: TextOverride::default(),
+                strip_bg: None,
+                plot_bg: None,
             },
             ThemeKind::Classic => Theme {
                 kind,
@@ -127,6 +197,14 @@ impl Theme {
                 tick_length_pt: 2.75,
                 ink,
                 paper,
+                axis_ticks_visible: true,
+                legend_pos: LegendPos::Right,
+                text: TextOverride::default(),
+                axis_text_ov: TextOverride::default(),
+                axis_title_ov: TextOverride::default(),
+                title_ov: TextOverride::default(),
+                strip_bg: None,
+                plot_bg: None,
             },
             ThemeKind::Jplot => Theme {
                 kind,
@@ -145,6 +223,14 @@ impl Theme {
                 tick_length_pt: 2.75,
                 ink,
                 paper,
+                axis_ticks_visible: true,
+                legend_pos: LegendPos::Right,
+                text: TextOverride::default(),
+                axis_text_ov: TextOverride::default(),
+                axis_title_ov: TextOverride::default(),
+                title_ov: TextOverride::default(),
+                strip_bg: None,
+                plot_bg: None,
             },
         }
     }
@@ -164,6 +250,146 @@ impl Theme {
     }
     pub fn panel_padding_pt(&self) -> f64 {
         self.half_line() * 0.5 // axis.ticks etc use half_line; panel margin 0
+    }
+
+    /// Apply ggplot2-named `theme(...)` overrides (see docs/ARCHITECTURE.md).
+    /// Value shapes from the R export: scalars (size/angle/hjust/vjust),
+    /// hex/colour strings, `{"type":"str","value":..}` for positions, and
+    /// `null` = `element_blank()`. Unrecognised names are ignored (forward
+    /// compatible) — same as ggplot2 silently accepting unknown elements.
+    pub fn apply_overrides(&mut self, elements: &HashMap<String, serde_json::Value>) {
+        use serde_json::Value as V;
+        // normalise the R-export encodings of `element_blank()` / NULL:
+        // jsonlite `null = "null"` gives `{}` or `{"type":"null"}`, and plain
+        // JSON null is also valid.
+        let is_blank = |v: &V| -> bool {
+            match v {
+                V::Null => true,
+                V::Object(m) => m.is_empty() || matches!(m.get("type").and_then(|t| t.as_str()), Some("null")),
+                V::Array(a) => a.is_empty(),
+                _ => false,
+            }
+        };
+        // pass 1: text overrides with inheritance (theme.text is the base)
+        let parse_text = |v: &V| -> Option<TextOverride> {
+            let obj = match v {
+                v if is_blank(v) => return Some(TextOverride::default()), // element_blank
+                V::Object(m) => m,
+                _ => return None,
+            };
+            let mut o = TextOverride::default();
+            if let Some(s) = obj.get("size").and_then(|x| x.as_f64()) {
+                o.size = Some(s);
+            }
+            if let Some(c) = obj.get("colour").and_then(|x| x.as_str()).and_then(Color::parse) {
+                o.colour = Some(c);
+            }
+            if matches!(obj.get("face").and_then(|x| x.as_str()), Some("bold")) {
+                o.bold = true;
+            }
+            if let Some(a) = obj.get("angle").and_then(|x| x.as_f64()) {
+                o.angle = Some(a);
+            }
+            if let Some(h) = obj.get("hjust").and_then(|x| x.as_f64()) {
+                o.hjust = Some(h);
+            }
+            if let Some(vj) = obj.get("vjust").and_then(|x| x.as_f64()) {
+                o.vjust = Some(vj);
+            }
+            // bare scalars (size = 9 / colour = "red")
+            if let V::Number(n) = v {
+                o.size = n.as_f64();
+            }
+            Some(o)
+        };
+        // merge theme.text over the inherited defaults first, then leaf
+        // elements merge over the (updated) text base
+        if let Some(t) = elements.get("text").and_then(parse_text) {
+            self.text = t.merged(&self.text);
+        }
+        if let Some(s) = self.text.size {
+            self.base_size = s;
+        }
+        let eff = |k: &str| -> Option<TextOverride> {
+            let own = elements.get(k).and_then(parse_text)?;
+            Some(own.merged(&self.text))
+        };
+        if let Some(a) = eff("axis.text") {
+            self.axis_text_ov = a;
+        }
+        if let Some(a) = eff("axis.title") {
+            self.axis_title_ov = a;
+        }
+        if let Some(ti) = eff("plot.title") {
+            self.title_ov = ti;
+        }
+        for k in elements.keys() {
+            let v = &elements[k];
+            // ---- text sizes on the whole family: base_size drives rel() math
+            // ---- legend.position ----
+            match k.as_str() {
+                "legend.position" => {
+                    if let V::Object(m) = v {
+                        match m.get("value").and_then(|x| x.as_str()) {
+                            Some("none") => self.legend_pos = LegendPos::None,
+                            Some("left") => self.legend_pos = LegendPos::Left,
+                            Some("top") => self.legend_pos = LegendPos::Top,
+                            Some("bottom") => self.legend_pos = LegendPos::Bottom,
+                            _ => self.legend_pos = LegendPos::Right,
+                        }
+                    } else if let Some(s) = v.as_str() {
+                        self.legend_pos = match s {
+                            "none" => LegendPos::None,
+                            "left" => LegendPos::Left,
+                            "top" => LegendPos::Top,
+                            "bottom" => LegendPos::Bottom,
+                            _ => LegendPos::Right,
+                        };
+                    }
+                }
+                // ---- panel.background / panel.border / strip.background (rect) ----
+                "panel.background" => {
+                    if let V::Object(m) = v {
+                        if let Some(c) = m.get("fill").and_then(|x| x.as_str()).and_then(Color::parse) {
+                            self.panel_bg = c;
+                        }
+                    }
+                }
+                "panel.border" => {
+                    self.panel_border = !is_blank(v);
+                }
+                "panel.grid" | "panel.grid.major" | "panel.grid.minor" => {
+                    // element_blank() (null) or colour: white + width via
+                    // geom_lw at draw; linewidth==0 also blanks
+                    if is_blank(v) {
+                        self.panel_grid_major = false;
+                        self.panel_grid_minor = false;
+                    } else if let V::Object(m) = v {
+                        if let Some(c) = m.get("colour").and_then(|x| x.as_str()).and_then(Color::parse) {
+                            self.panel_grid = c;
+                        }
+                        if m.get("linewidth").and_then(|x| x.as_f64()) == Some(0.0) {
+                            self.panel_grid_major = false;
+                            self.panel_grid_minor = false;
+                        }
+                    }
+                }
+                "strip.background" => {
+                    if let V::Object(m) = v {
+                        self.strip_bg = m.get("fill").and_then(|x| x.as_str()).and_then(Color::parse);
+                    }
+                }
+                "plot.background" => {
+                    if let V::Object(m) = v {
+                        self.plot_bg = m.get("fill").and_then(|x| x.as_str()).and_then(Color::parse);
+                    }
+                }
+                "axis.ticks" => {
+                    self.axis_ticks_visible = !is_blank(v);
+                }
+                _ => {}
+            }
+        }
     }
 }
 

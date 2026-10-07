@@ -303,6 +303,28 @@ pub enum ThemeSpec {
     Classic,
     /// jplot house style (default for new plots)
     Jplot,
+    /// ggplot2 `theme_*() + theme(...)` pattern: a base family plus
+    /// ggplot2-named element overrides (resolved through ggplot2's inheritance
+    /// chain; see docs/ARCHITECTURE.md).
+    Custom {
+        /// base theme by name: grey | bw | minimal | classic | jplot
+        #[serde(default)]
+        base: Option<String>,
+        #[serde(default, deserialize_with = "crate::serde_util::map_or_empty")]
+        elements: HashMap<String, serde_json::Value>,
+    },
+}
+
+impl ThemeSpec {
+    fn from_name(s: &str) -> ThemeSpec {
+        match s {
+            "bw" => ThemeSpec::Bw,
+            "minimal" => ThemeSpec::Minimal,
+            "classic" => ThemeSpec::Classic,
+            "jplot" => ThemeSpec::Jplot,
+            _ => ThemeSpec::Grey,
+        }
+    }
 }
 
 impl ThemeSpec {
@@ -314,6 +336,25 @@ impl ThemeSpec {
             ThemeSpec::Minimal => Minimal,
             ThemeSpec::Classic => Classic,
             ThemeSpec::Jplot => Jplot,
+            ThemeSpec::Custom { base, .. } => {
+                base.as_ref().map(|n| ThemeSpec::from_name(n).kind()).unwrap_or(crate::theme::ThemeKind::Grey)
+            }
+        }
+    }
+
+    /// Resolve the effective theme: base + ggplot2-named element overrides.
+    pub fn resolve(&self) -> crate::theme::Theme {
+        match self {
+            ThemeSpec::Custom { base, elements } => {
+                let mut t = match base {
+                    Some(n) => ThemeSpec::from_name(n),
+                    None => ThemeSpec::Grey,
+                }
+                .resolve();
+                t.apply_overrides(elements);
+                t
+            }
+            other => crate::theme::Theme::new(other.kind()),
         }
     }
 }

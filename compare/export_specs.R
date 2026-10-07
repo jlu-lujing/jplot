@@ -325,4 +325,22 @@ for (f in gallery_specs) {
                        auto_unbox = TRUE, digits = 10, null = "null", empty_object = TRUE)
 }
 
+
+## 43–46: theme(...) element overrides ---------------------------------------
+save("43_thm_nogrid", spec(df, list(x = "mpg"), list(layer("histogram")),
+     theme = list(kind = "custom", base = "grey", elements = list(panel.grid = NULL))))
+render("43_thm_nogrid", ggplot(df, aes(mpg)) + geom_histogram() + theme(panel.grid = element_blank()))
+
+save("44_thm_bg", spec(df, list(x = "mpg"), list(layer("histogram")),
+     theme = list(kind = "custom", base = "grey", elements = list(panel.background = list(fill = "#0000FFFF")))))
+render("44_thm_bg", ggplot(df, aes(mpg)) + geom_histogram() + theme(panel.background = element_rect(fill = "#0000FF")))
+
+save("45_thm_axis", spec(df, list(x = "disp", y = "mpg"), list(layer("point")),
+     theme = list(kind = "custom", base = "grey", elements = list(axis.text = list(size = 9, colour = "#0000FFFF")))))
+render("45_thm_axis", ggplot(df, aes(disp, mpg)) + geom_point() + theme(axis.text = element_text(size = 9, colour = "#0000FF")))
+
+save("46_thm_noleg", spec(df, list(x = "disp", y = "mpg", colour = "cyl"), list(layer("point")),
+     theme = list(kind = "custom", base = "grey", elements = list(legend.position = "none"))))
+render("46_thm_noleg", ggplot(df, aes(disp, mpg, colour = cyl)) + geom_point() + theme(legend.position = "none"))
+
 cat("exported", length(list.files("specs")), "specs + refs +", length(gallery_specs), "gallery specs\n")

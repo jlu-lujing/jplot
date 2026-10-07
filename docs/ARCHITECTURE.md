@@ -53,6 +53,22 @@ spec.rs (PlotSpec JSON DSL)
 3. **jitter RNG** 无法与 R 的 Mersenne-Twister 对齐：散点散布的随机位置不可逐位复现；离散图验证用固定 seed 或关闭。
 4. **重算法保真度**（loess/hexbin/contour）：按"大体一致"验收，允许亚像素/轻微数值差。
 
+5. **饱和底色放大 AA 残差**（44_thm_bg）：网格线的亚像素位置漂移在灰底上低于阈值，在纯蓝 panel 上白线 AA 混合差被放大到 ~1%；视觉一致（side 图核对），属字形/线 AA 类的已知结构性残差。
+
+## 4b. 主题参数体系（对齐 ggplot2 `theme()`）
+
+`ThemeSpec::Custom { base, elements }` = ggplot2 `theme_*() + theme(...)`：
+- **元素命名与 R 完全一致**（`panel.grid`、`axis.text`、`legend.position`、
+  `panel.background`…），值形态来自 R 导出（`#RRGGBBAA` 颜色、`{"type":"str"}`
+  位置、jsonlite 的 null 三形态 `{}`/`{"type":"null"}`/null = `element_blank()`）；
+- 继承链近似实现：`text` 为底 → `axis.text`/`axis.title`/`plot.title` merge；
+  未识别元素静默忽略（与 ggplot2 宽容行为一致）；
+- 已支持元素：`text`(size/colour/face/angle, base_size 联动)、`axis.text`、
+  `axis.title`、`plot.title`、`panel.background`(fill)、`panel.border`(blank)、
+  `panel.grid*`(blank/colour)、`axis.ticks`(blank)、`plot.background`、
+  `legend.position`(none/left/top/bottom/right)；
+- 验证：43(nogrid)/44(蓝 panel)/45(axis.text)/46(legend=none) 全 <1.1%。
+
 ## 5. 约定
 
 - **R-first**：任何几何/默认值改动前，先用 `Rscript` 探针（`layer_data`/`ggplot_build`/svg 几何 grep）取真值，禁止从源码推断后直接写死。

@@ -12,7 +12,6 @@ use crate::scene::{layer, Line, Paint, Primitive, Scene, TextAlign, TextStyle};
 use crate::scale::Color;
 use crate::text::measure;
 use crate::probes;
-use crate::theme::Theme;
 use crate::theme::geom_defaults::geom_lw;
 
 pub struct Viewport {
@@ -55,18 +54,19 @@ impl Viewport {
 
 pub fn layout(bp: &BuiltPlot) -> Scene {
     let spec = &bp.plot;
-    let theme = Theme::new(spec.theme.kind());
+    let theme = spec.theme.resolve();
     let width = spec.width;
     let height = spec.height;
     let hl = theme.half_line(); // 5.5
     let mut sc = Scene::new(width, height);
-    sc.background = Color::white();
+    sc.background = theme.plot_bg.unwrap_or(Color::white());
 
     let (x_breaks, x_labels) = axis_breaks(&bp.x_scale);
     let (y_breaks, y_labels) = axis_breaks(&bp.y_scale);
     let label_style = TextStyle {
-        size: theme.small_text(),
-        color: theme.axis_text,
+        size: theme.axis_text_ov.size.unwrap_or(theme.small_text()),
+        color: theme.axis_text_ov.colour.unwrap_or(theme.axis_text),
+        bold: theme.axis_text_ov.bold,
         ..Default::default()
     };
     let tick_line = Line::solid(Color::rgb(51, 51, 51), geom_lw(0.5)); // #333 @ 0.5mm→1.07 (ref probe)
@@ -103,7 +103,11 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
         top += probes::gutter::SUBTITLE_H;
     }
     let mut right = probes::gutter::PLOT_MARGIN;
-    let guides: Vec<guides::Guide> = guides::build_guides(bp, &label_style);
+    let guides: Vec<guides::Guide> = if theme.legend_pos == crate::theme::LegendPos::None {
+        Vec::new()
+    } else {
+        guides::build_guides(bp, &label_style)
+    };
     {
         if !guides.is_empty() {
             // all guides share one column; width sized by the widest label
@@ -252,7 +256,12 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
         }
         if !x_lab.is_empty() {
             // svglite: "disp" baseline = 472.20 (= height - 7.80), size 11, centred
-            let ts = TextStyle { size: theme.base_size, ..label_style.clone() };
+            let ts = TextStyle {
+                size: theme.axis_title_ov.size.unwrap_or(theme.base_size),
+                color: theme.axis_title_ov.colour.unwrap_or(theme.axis_text),
+                bold: theme.axis_title_ov.bold,
+                ..label_style.clone()
+            };
             sc.layer(layer::TITLES).push(Primitive::Text {
                 content: x_lab.clone(),
                 x: (vp.x0 + vp.x1) / 2.0,
@@ -262,7 +271,13 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
         }
         if !y_lab.is_empty() {
             // svglite: translate(13.36, 226.99) rotate(-90) anchor=middle
-            let ts = TextStyle { size: theme.base_size, angle: 90.0, ..label_style.clone() };
+            let ts = TextStyle {
+                size: theme.axis_title_ov.size.unwrap_or(theme.base_size),
+                color: theme.axis_title_ov.colour.unwrap_or(theme.axis_text),
+                bold: theme.axis_title_ov.bold,
+                angle: 90.0,
+                ..label_style.clone()
+            };
             sc.layer(layer::TITLES).push(Primitive::Text {
                 content: y_lab.clone(),
                 x: probes::axis::YTITLE_X,
@@ -274,7 +289,17 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
 
     // --- titles / caption ----------------------------------------------------
     if let Some(t) = &spec.labels.title {
-        let ts = TextStyle { size: theme.large_text(), halign: TextAlign::Left, ..Default::default() };
+        let ts = TextStyle {
+            size: theme.title_ov.size.unwrap_or(theme.large_text()),
+            color: theme.title_ov.colour.unwrap_or(Color::black()),
+            bold: theme.title_ov.bold,
+            halign: if theme.title_ov.hjust == Some(0.5) || theme.title_ov.hjust.is_none() {
+                TextAlign::Left
+            } else {
+                theme.title_ov.hjust.map_or(TextAlign::Left, |h| if h <= 0.25 { TextAlign::Left } else if h >= 0.75 { TextAlign::Right } else { TextAlign::Center })
+            },
+            ..Default::default()
+        };
         // svglite title baseline (size 13.2)
         sc.layer(layer::TITLES).push(Primitive::Text {
             content: t.clone(),

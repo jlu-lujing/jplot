@@ -61,6 +61,14 @@ impl Color {
                     let p = |i: usize| -> Option<u32> { Some(v(digits[i])? * 16 + v(digits[i + 1])?) };
                     Some(Color::rgb(p(0)? as u8, p(2)? as u8, p(4)? as u8))
                 }
+                // R/ggplot2 rgb()/scales always emit #RRGGBBAA (e.g.
+                // "#0000FFFF" = opaque blue) — must round-trip or overrides
+                // from the R export silently drop.
+                8 => {
+                    let p = |i: usize| -> Option<u32> { Some(v(digits[i])? * 16 + v(digits[i + 1])?) };
+                    let c = Color::rgb(p(0)? as u8, p(2)? as u8, p(4)? as u8);
+                    Some(Color { a: p(6)? as f64 / 255.0, ..c })
+                }
                 _ => None,
             }
         } else {
