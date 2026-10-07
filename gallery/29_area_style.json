@@ -1,0 +1,1 @@
+{"data":{"x":{"kind":"numeric","values":[1,2,3,4,5,6,7,8]},"y":{"kind":"numeric","values":[3,5,4,6,5,7,6,8]}},"mapping":{"map":{"x":"x","y":"y"}},"layers":[{"geom":{"kind":"area"},"stat":null,"position":{"kind":"identity"},"mapping":{"map":[]},"args":[],"inherit_aes":true}],"scales":[],"labels":[],"theme":{"kind":"jplot"},"width":720,"height":480}

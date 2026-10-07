@@ -315,4 +315,15 @@ save("42_ablineh", spec(df, list(x = "disp", y = "mpg"),
      list(layer("point"), layer("abline", args = list(intercept = 30, slope = -0.04)))))
 render("42_ablineh", ggplot(df, aes(disp, mpg)) + geom_point() + geom_abline(intercept = 30, slope = -0.04, colour = "red"))
 
-cat("exported", length(list.files("specs")), "specs + refs\n")
+
+## gallery: same specs re-saved with the house theme (kind = "jplot") --------
+gallery_specs <- list.files("specs", pattern = "\\.json$", full.names = TRUE)
+for (f in gallery_specs) {
+  sp <- jsonlite::fromJSON(f, simplifyVector = FALSE)
+  sp$theme <- list(kind = "jplot")
+  name <- gsub("\\.json$", "", basename(f))
+  jsonlite::write_json(sp, file.path("../gallery", paste0(name, "_style.json")),
+                       auto_unbox = TRUE, digits = 10, null = "null", empty_object = TRUE)
+}
+
+cat("exported", length(list.files("specs")), "specs + refs +", length(gallery_specs), "gallery specs\n")
