@@ -48,8 +48,8 @@ spec.rs (PlotSpec JSON DSL)
 
 ## 4. 已知偏差登记（不追，但必须知道）
 
-1. **svglite ↔ cairo 固有差**：minor gridlines 在 svglite SVG 缺失；文字 kerning/基线依赖字体渲染器。对比两边统一走 resvg 后自洽；若以 cairo PNG 为真值（人眼所见），文字区会有 ~0.5–1% 结构性差。
-2. **Wilkinson 刻度 tie-break**：extended_breaks 的浮点并列解偶有选择不同（如 freqpoly 标签 "2.0" vs "2"），导致 gutter 差 1–2px（当前最大残差 24_freqpoly 1.76% 即此类）。
+1. **svglite ↔ cairo 固有差**（2026-10 修正）：svglite **有**双层网格（major 1.07px + minor 0.53px），已双层实现；resvg **严格执行** `textLength`+`lengthAdjust`，刻度标签已按 R stringWidth 钉死。剩余文字差 = 字形 AA，结构性 ~0.1–0.3%。
+2. **Wilkinson 刻度 tie-break**：extended_breaks 的浮点并列解偶有选择不同（如 freqpoly 标签 "2.0" vs "2"），导致 gutter 差 1–2px；24_freqpoly 另有 stat-bin 扩展端点差异（freqpoly 双侧空 bin 规则未完全对齐，残差 ~1.8%，单图低优先）。
 3. **jitter RNG** 无法与 R 的 Mersenne-Twister 对齐：散点散布的随机位置不可逐位复现；离散图验证用固定 seed 或关闭。
 4. **重算法保真度**（loess/hexbin/contour）：按"大体一致"验收，允许亚像素/轻微数值差。
 

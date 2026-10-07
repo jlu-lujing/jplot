@@ -211,7 +211,9 @@ pub mod geom_defaults {
     /// Both the reference and jplot PNGs are rasterised by the SAME resvg, so
     /// emitting the identical stroke number reproduces the identical pixels.
     const GEOM_LW_PX_PER_MM: f64 = 1.07 / 0.5; // line/box/bar borders (2.14)
-    const THEME_LW_PX_PER_MM: f64 = 0.53 / 0.5; // grid + axis ticks (1.06)
+    // (theme-level lines all share geom_lw today: ggplot2 grid.major/axis.ticks
+    // are 0.5mm → 1.07px; grid.minor is 0.25mm → 0.53px — a single mm→px
+    // family suffices; the old THEME_LW (0.53/0.5) was a mis-calibration.)
     const POINT_STROKE_PX_PER_MM: f64 = 0.71 / 0.5; // point/outlier stroke
 
     /// ggplot2 linewidth/size unit is MILLIMETRES; svglite device mapping.
@@ -221,10 +223,6 @@ pub mod geom_defaults {
     /// stroke-width for a geom-level linewidth (geom_line/path/box/bar/rect).
     pub fn geom_lw(v_mm: f64) -> f64 {
         v_mm * GEOM_LW_PX_PER_MM
-    }
-    /// stroke-width for theme lines: panel.grid.major + axis.ticks.
-    pub fn theme_lw(v_mm: f64) -> f64 {
-        v_mm * THEME_LW_PX_PER_MM
     }
     /// stroke-width for point / outlier circle outlines (ggplot2 `stroke`).
     pub fn point_stroke(v_mm: f64) -> f64 {
