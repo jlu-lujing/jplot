@@ -143,4 +143,30 @@ save("08_col", spec(ds2, list(x = "g", y = "v"), list(layer("col")),
                     labels = list(title = "Counts", x = "group", y = "value")))
 render("08_col", ggplot(ds2, aes(g, v)) + geom_col() + labs(x = "group", y = "value", title = "Counts"))
 
+## 11 log10 y --------------------------------------------------------------
+save("11_log10y", spec(df, list(x = "disp", y = "mpg"), list(layer("point")),
+     scales = list(y = list(kind = "continuous", transform = list(kind = "log10")))))
+render("11_log10y", ggplot(df, aes(disp, mpg)) + geom_point() + scale_y_log10())
+
+## 12 log10 x --------------------------------------------------------------
+save("12_log10x", spec(df, list(x = "disp", y = "mpg"), list(layer("point")),
+     scales = list(x = list(kind = "continuous", transform = list(kind = "log10")))))
+render("12_log10x", ggplot(df, aes(disp, mpg)) + geom_point() + scale_x_log10())
+
+## 13 reverse y ------------------------------------------------------------
+save("13_reversy", spec(df, list(x = "disp", y = "mpg"), list(layer("point")),
+     scales = list(y = list(kind = "continuous", transform = list(kind = "reverse")))))
+render("13_reversy", ggplot(df, aes(disp, mpg)) + geom_point() + scale_y_reverse())
+
+## 14 sqrt y ---------------------------------------------------------------
+save("14_sqrty", spec(df, list(x = "disp", y = "mpg"), list(layer("point")),
+     scales = list(y = list(kind = "continuous", transform = list(kind = "sqrt")))))
+render("14_sqrty", ggplot(df, aes(disp, mpg)) + geom_point() + scale_y_sqrt())
+
+## 15 log10 y with censoring limits ---------------------------------------
+save("15_log10lim", spec(df, list(x = "disp", y = "mpg"), list(layer("point")),
+     scales = list(y = list(kind = "continuous", transform = list(kind = "log10"),
+                             limits = list(15, 30)))))
+render("15_log10lim", ggplot(df, aes(disp, mpg)) + geom_point() + scale_y_log10(limits = c(15, 30)))
+
 cat("exported", length(list.files("specs")), "specs + refs\n")

@@ -647,7 +647,17 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
             }
             Some(BuiltScale::Discrete(DiscreteScale::train(disc_levels, &spec)))
         } else if !cont.is_empty() {
-            let r = Range::from_values(&cont)?;
+            // transform into scale space before training (log of ≤0 → NaN,
+            // dropped from the range like ggplot2's warning + oob censor)
+            let tr = match &spec {
+                crate::scale::ScaleSpec::Continuous { transform, .. } => {
+                    *transform
+                }
+                _ => None,
+            };
+            let tr = tr.unwrap_or(crate::scale::TransformSpec::Identity);
+            let tvals: Vec<f64> = cont.iter().map(|v| tr.transform(*v)).filter(|v| v.is_finite()).collect();
+            let r = Range::from_values(&tvals)?;
             Some(BuiltScale::Continuous(ContinuousScale::train(r, &spec)))
         } else {
             None

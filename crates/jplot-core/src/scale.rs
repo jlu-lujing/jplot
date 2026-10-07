@@ -438,6 +438,251 @@ fn trim_zeros(s: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Transform / expand / oob (scales + ggplot2 port, docs/TRANSFORM_PLAN.md)
+// ---------------------------------------------------------------------------
+
+/// scales::transform_* port. Enum (not trait object) so it serialises + Copy.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TransformSpec {
+    Identity,
+    Log10,
+    Log2,
+    Log { base: f64 },
+    Sqrt,
+    Reverse,
+}
+
+impl TransformSpec {
+    /// transform into the internal space; values outside the domain → NaN
+    /// (dropped from training / censored in map, ≈ ggplot2 warning + oob→NA).
+    pub fn transform(&self, x: f64) -> f64 {
+        match self {
+            TransformSpec::Identity => x,
+            TransformSpec::Reverse => -x,
+            TransformSpec::Sqrt => {
+                if x < 0.0 {
+                    f64::NAN
+                } else {
+                    x.sqrt()
+                }
+            }
+            TransformSpec::Log10 => {
+                if x <= 0.0 {
+                    f64::NAN
+                } else {
+                    x.log10()
+                }
+            }
+            TransformSpec::Log2 => {
+                if x <= 0.0 {
+                    f64::NAN
+                } else {
+                    x.log2()
+                }
+            }
+            TransformSpec::Log { base } => {
+                if x <= 0.0 {
+                    f64::NAN
+                } else {
+                    x.ln() / base.ln()
+                }
+            }
+        }
+    }
+
+    pub fn inverse(&self, t: f64) -> f64 {
+        match self {
+            TransformSpec::Identity => t,
+            TransformSpec::Reverse => -t,
+            TransformSpec::Sqrt => {
+                if t < 0.0 {
+                    f64::NAN
+                } else {
+                    t * t
+                }
+            }
+            TransformSpec::Log10 => 10f64.powf(t),
+            TransformSpec::Log2 => 2f64.powf(t),
+            TransformSpec::Log { base } => base.powf(t),
+        }
+    }
+
+    pub fn base(&self) -> Option<f64> {
+        match self {
+            TransformSpec::Log10 => Some(10.0),
+            TransformSpec::Log2 => Some(2.0),
+            TransformSpec::Log { base } => Some(*base),
+            _ => None,
+        }
+    }
+
+    /// Major breaks, **data-space in, data-space out** (scale-.R:1193–1197:
+    /// get_breaks inverts the limits, runs the breaks fn on data, transforms
+    /// back). Only log has a special breaks fn; identity/reverse/sqrt use
+    /// extended_breaks on the expanded data range.
+    pub fn breaks(&self, lo: f64, hi: f64, n: usize) -> Vec<f64> {
+        match self.base() {
+            None => extended_breaks(lo, hi, n),
+            Some(base) => log_breaks(lo, hi, n, base),
+        }
+    }
+}
+
+/// expansion(mult=c(l,r), add=c(l,r)) → four per-side coefficients.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ExpandSpec {
+    pub mult_l: f64,
+    pub add_l: f64,
+    pub mult_r: f64,
+    pub add_r: f64,
+}
+
+impl ExpandSpec {
+    pub const DEFAULT_CONTINUOUS: Self = Self { mult_l: 0.05, mult_r: 0.05, add_l: 0.0, add_r: 0.0 };
+
+    /// scales::expand_range4 (bounds.R:352–360). `lo`/`hi` are the (already
+    /// transformed, ascending) unexpanded limits; returns the expanded pair.
+    pub fn expand_range4(&self, lo: f64, hi: f64) -> (f64, f64) {
+        let w = if lo == hi { 1.0 } else { hi - lo };
+        (lo - (w * self.mult_l + self.add_l), hi + (w * self.mult_r + self.add_r))
+    }
+}
+
+/// scales::oob_* port (bounds.R:275–334).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Oob {
+    Censor,
+    Squish,
+    Keep,
+}
+
+impl Oob {
+    pub fn apply(&self, v: f64, lo: f64, hi: f64) -> f64 {
+        match self {
+            Oob::Keep => v,
+            Oob::Squish => v.clamp(lo, hi),
+            Oob::Censor => {
+                if v < lo || v > hi {
+                    f64::NAN
+                } else {
+                    v
+                }
+            }
+        }
+    }
+}
+
+/// scales::log_breaks(n, base) + log_sub_breaks port, following the
+/// decompiled 1.4.0 reference exactly (breaks-log.R:46–207): integer powers
+/// first, then greedy multipliers with a ±1 padded window, then the
+/// extended_breaks fallback. Input/output are data-space values.
+pub fn log_breaks(lo: f64, hi: f64, n: usize, base: f64) -> Vec<f64> {
+    if !lo.is_finite() || !hi.is_finite() || lo <= 0.0 || hi <= 0.0 {
+        return vec![];
+    }
+    let llo = lo.ln() / base.ln();
+    let lhi = hi.ln() / base.ln();
+    let mn = llo.floor();
+    let mx = lhi.ceil();
+    if mx == mn {
+        return vec![base.powf(mn)];
+    }
+    let in_rng = |b: f64| b >= lo && b <= hi;
+    // integer powers of `base` from 10^mn to 10^mx, stepping the exponent
+    let mk = |by: i64| -> Vec<f64> {
+        let mut out = Vec::new();
+        let mut e = mn;
+        while e <= mx + 1e-9 {
+            out.push(base.powf(e));
+            e += by as f64;
+        }
+        out
+    };
+    let mut by = ((mx - mn) / n as f64).floor() as i64 + 1;
+    let mut breaks = mk(by);
+    if breaks.iter().filter(|b| in_rng(**b)).count() >= n.saturating_sub(2) {
+        return breaks;
+    }
+    while by > 1 {
+        by -= 1;
+        breaks = mk(by);
+        if breaks.iter().filter(|b| in_rng(**b)).count() >= n.saturating_sub(2) {
+            return breaks;
+        }
+    }
+    // ---- log_sub_breaks (breaks-log.R:175–207) ----
+    if base > 2.0 {
+        let mut steps: Vec<f64> = vec![1.0];
+        let mut cand: Vec<f64> = (2..base as i64).map(|c| c as f64).collect();
+        let mut all: Vec<f64> = Vec::new();
+        let mut have_enough = false;
+        while let Some(pos) = pick_delta(&cand, &steps, base) {
+            steps.push(cand[pos]);
+            cand.remove(pos);
+            let mut acc: Vec<f64> = Vec::new();
+            let mut e = mn;
+            while e <= mx + 1e-9 {
+                let p = base.powf(e);
+                for &s in &steps {
+                    acc.push(p * s);
+                }
+                e += 1.0;
+            }
+            acc.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            acc.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+            if acc.iter().filter(|b| in_rng(**b)).count() >= n.saturating_sub(2) {
+                all = acc;
+                have_enough = true;
+                break;
+            }
+        }
+        if have_enough {
+            // pad ±1 index beyond the in-range window (reference lines 27–31)
+            let rel_idx: Vec<usize> = all
+                .iter()
+                .enumerate()
+                .filter(|(_, b)| in_rng(**b))
+                .map(|(i, _)| i)
+                .collect();
+            let lo_i = rel_idx.first().map(|i| (*i as i64 - 1).max(0) as usize).unwrap_or(0);
+            let hi_i = rel_idx.last().map(|i| (*i + 1).min(all.len() - 1)).unwrap_or(0);
+            return all[lo_i..=hi_i].to_vec();
+        }
+    }
+    // final fallback: extended breaks over the raw data range
+    extended_breaks(lo, hi, n)
+}
+
+/// Greedy delta pick from log_sub_breaks: choose the candidate that maximises
+/// the minimum log-gap after appending it to `steps` (i.e. the sparsest).
+fn pick_delta(cand: &[f64], steps: &[f64], base: f64) -> Option<usize> {
+    if cand.is_empty() {
+        return None;
+    }
+    let delta = |st: &mut Vec<f64>| -> f64 {
+        let mut pts: Vec<f64> = st.iter().map(|s| s.ln() / base.ln()).collect();
+        pts.push(0.0);
+        pts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        pts.dedup_by(|a, b| (*a - *b).abs() < 1e-12);
+        pts.windows(2).map(|w| w[1] - w[0]).fold(f64::INFINITY, f64::min)
+    };
+    let mut best = 0usize;
+    let mut bestv = f64::NEG_INFINITY;
+    for (i, c) in cand.iter().enumerate() {
+        let mut st2: Vec<f64> = steps.to_vec();
+        st2.push(*c);
+        let d = delta(&mut st2);
+        if d > bestv {
+            bestv = d;
+            best = i;
+        }
+    }
+    Some(best)
+}
+
+// ---------------------------------------------------------------------------
 // Scale specs (serialisable)
 // ---------------------------------------------------------------------------
 
@@ -456,6 +701,14 @@ pub enum ScaleSpec {
         name: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         expand: Option<[f64; 2]>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        transform: Option<TransformSpec>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expand4: Option<ExpandSpec>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        oob: Option<Oob>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        n_breaks: Option<usize>,
     },
     /// Manual discrete scale: named levels -> values (colours etc.).
     DiscreteManual {
@@ -489,82 +742,123 @@ impl Default for ScaleSpec {
             labels: None,
             name: None,
             expand: None,
+            transform: None,
+            expand4: None,
+            oob: None,
+            n_breaks: None,
         }
     }
 }
 
-/// Trained continuous scale: domain (after expansion) -> [0,1].
+/// Trained continuous scale. All internal geometry (`t_range`, `breaks`) lives
+/// in the TRANSFORMED space so log/sqrt/reverse expand and place breaks like
+/// ggplot2; `map(v)` transforms the incoming data value first. `range` and
+/// `limits` are reported back in DATA space (inverse) for display/debug.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContinuousScale {
-    /// user limits (unexpanded) — breaks are computed on this
     pub limits: Range,
-    /// panel range after expansion — data maps through this
     pub range: Range,
+    /// transformed-space expanded range — map() normalises against this
+    pub t_range: Range,
+    pub transform: TransformSpec,
+    pub oob: Oob,
+    /// major breaks in TRANSFORMED space
     pub breaks: Vec<f64>,
     pub labels: Vec<String>,
     pub name: Option<String>,
 }
 
 impl ContinuousScale {
-    /// ggplot2 defaults: expand = c(0.05, 0); breaks = extended(limits, n=5)
-    /// when no manual breaks; labels = formatted breaks.
+    /// `data_range` is the range of the layer's values **already transformed**
+    /// into this scale's space by the caller (identity → unchanged); values
+    /// outside the domain (log of ≤0) are filtered out by the caller.
     pub fn train(data_range: Range, spec: &ScaleSpec) -> ContinuousScale {
-        let (limits, expand, breaks, labels, name) = match spec {
+        let (limits, expand, expand4, breaks, labels, name, tr, oob, n_breaks) = match spec {
             ScaleSpec::Continuous {
                 limits,
                 breaks,
                 labels,
                 name,
                 expand,
+                expand4,
+                transform,
+                oob,
+                n_breaks,
             } => (
                 limits.map(|[a, b]| Range { min: a, max: b }),
-                expand.unwrap_or([0.05, 0.0]),
+                *expand,
+                *expand4,
                 breaks.clone(),
                 labels.clone(),
                 name.clone(),
+                transform.unwrap_or(TransformSpec::Identity),
+                oob.unwrap_or(Oob::Censor),
+                n_breaks.unwrap_or(5),
             ),
-            _ => (None, [0.05, 0.0], None, None, None),
+            _ => (None, None, None, None, None, None, TransformSpec::Identity, Oob::Censor, 5),
         };
-        let mut limits = limits.unwrap_or(data_range);
-        if limits.min == limits.max {
-            // ggplot2 dispenses a width for zero-range (like zero_width=1)
-            let half = if limits.min == 0.0 { 0.5 } else { limits.min.abs() * 0.1 };
-            limits = Range {
-                min: limits.min - half,
-                max: limits.max + half,
-            };
+        // old symmetric `expand` [mult, add] maps to a 4-element ExpandSpec.
+        let exp4 = expand4.unwrap_or_else(|| match expand {
+            Some([m, a]) => ExpandSpec { mult_l: m, mult_r: m, add_l: a, add_r: a },
+            None => ExpandSpec::DEFAULT_CONTINUOUS,
+        });
+        // unexpanded limits in transformed space (spec.limits are DATA-space)
+        let mut t_limits = match limits {
+            Some(l) => {
+                let (a, b) = (tr.transform(l.min), tr.transform(l.max));
+                let (a, b) = (a.min(b), a.max(b));
+                Range { min: a, max: b }
+            }
+            None => data_range,
+        };
+        if t_limits.min == t_limits.max {
+            let half = if t_limits.min == 0.0 { 0.5 } else { t_limits.min.abs() * 0.1 };
+            t_limits = Range { min: t_limits.min - half, max: t_limits.max + half };
         }
-        // ggplot2 4.x expand_range: symmetric mul/add on both ends
-        // (probe: 0..14 → -0.7..14.7).
-        let mut range = limits;
-        let w = range.max - range.min;
-        range.min -= w * expand[0] + expand[1];
-        range.max += w * expand[0] + expand[1];
-        // breaks are computed by extended() on the EXPANDED range, then
-        // clipped to range (probes: dodge y limits 0..12 → breaks on
-        // -0.6..12.6 → 0,2.5,…,12.5).
-        let breaks = breaks.unwrap_or_else(|| extended_breaks(range.min, range.max, 5));
-        let labels = labels.unwrap_or_else(|| format_breaks(&breaks));
+        let (t_lo, t_hi) = exp4.expand_range4(t_limits.min, t_limits.max);
+        let t_range = Range { min: t_lo, max: t_hi };
+        // data-space view of the expanded range, ascending
+        let (i0, i1) = (tr.inverse(t_lo), tr.inverse(t_hi));
+        let (data_lo, data_hi) = (i0.min(i1), i0.max(i1));
+        // breaks: fn runs in DATA space, results transform back (scale-.R:1193–1208).
+        // Pair with labels before sorting by transformed value so reverse
+        // (where the transformed order is descending) keeps labels aligned.
+        let breaks_data = breaks.unwrap_or_else(|| tr.breaks(data_lo, data_hi, n_breaks));
+        let labels_in = labels.clone().unwrap_or_else(|| format_breaks(&breaks_data));
+        let mut pairs: Vec<(f64, String)> = breaks_data
+            .iter()
+            .zip(labels_in.iter())
+            .map(|(b, l)| (tr.transform(*b), l.clone()))
+            .filter(|(t, _)| t.is_finite() && *t >= t_range.min && *t <= t_range.max)
+            .collect();
+        pairs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        let (breaks_t, labels): (Vec<f64>, Vec<String>) = pairs.into_iter().unzip();
+        let (d0, d1) = (tr.inverse(t_limits.min), tr.inverse(t_limits.max));
         ContinuousScale {
-            limits,
-            range,
-            breaks,
+            limits: Range { min: d0.min(d1), max: d0.max(d1) },
+            range: Range { min: data_lo, max: data_hi },
+            t_range,
+            transform: tr,
+            oob,
+            breaks: breaks_t,
             labels,
             name,
         }
     }
 
     pub fn map(&self, v: f64) -> f64 {
-        (v - self.range.min) / (self.range.max - self.range.min)
+        let t = self.transform.transform(v);
+        let t = self.oob.apply(t, self.t_range.min, self.t_range.max);
+        (t - self.t_range.min) / (self.t_range.max - self.t_range.min)
     }
 
-    /// breaks clipped into the (expanded) range, sorted
+    /// visible major ticks as (DATA-space position, label), sorted.
     pub fn breaks_in_range(&self) -> Vec<(f64, String)> {
         self.breaks
             .iter()
             .zip(self.labels.iter())
-            .filter(|(b, _)| **b >= self.range.min && **b <= self.range.max)
-            .map(|(b, l)| (*b, l.clone()))
+            .filter(|(b, _)| **b >= self.t_range.min && **b <= self.t_range.max)
+            .map(|(b, l)| (self.transform.inverse(*b), l.clone()))
             .collect()
     }
 }
