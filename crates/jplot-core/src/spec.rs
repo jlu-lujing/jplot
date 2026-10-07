@@ -57,6 +57,10 @@ pub enum GeomSpec {
     /// geom_hline / geom_vline: constant lines (intercept from aes or param)
     Hline,
     Vline,
+    /// geom_text: labels at (x, y)
+    Text,
+    /// geom_area: filled area to y=0 (stacks by default)
+    Area,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -52,7 +52,9 @@ layer <- function(geom, ..., stat = NULL, position = list(kind = "identity"), ma
     freqpoly = list(kind = "freqpoly", bins = 30),
     step = list(kind = "step"),
     hline = list(kind = "hline"),
-    vline = list(kind = "vline")
+    vline = list(kind = "vline"),
+    text = list(kind = "text"),
+    area = list(kind = "area")
   )
   list(geom = g, stat = stat, position = position,
        mapping = if (is.null(mapping)) list(map = list()) else list(map = mapping),
@@ -228,5 +230,15 @@ render("26_vline", ggplot(hp, aes(disp, mpg)) + geom_point() + geom_vline(xinter
 save("27_stack", spec(df, list(x = "cyl", fill = "vs"),
      list(layer("bar", position = list(kind = "stack")))))
 render("27_stack", ggplot(df, aes(cyl, fill = vs)) + geom_bar(position = "stack"))
+
+## 28 text labels ----------------------------------------------------------
+dtext <- data.frame(x = c(50, 150, 250), y = c(30, 20, 10), lab = c("low", "mid", "high"))
+save("28_text", spec(dtext, list(x = "x", y = "y", label = "lab"), list(layer("text"))))
+render("28_text", ggplot(dtext, aes(x, y, label = lab)) + geom_text())
+
+## 29 area -----------------------------------------------------------------
+darea <- data.frame(x = 1:8, y = c(3, 5, 4, 6, 5, 7, 6, 8))
+save("29_area", spec(darea, list(x = "x", y = "y"), list(layer("area"))))
+render("29_area", ggplot(darea, aes(x, y)) + geom_area())
 
 cat("exported", length(list.files("specs")), "specs + refs\n")

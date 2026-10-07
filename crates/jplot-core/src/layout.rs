@@ -376,6 +376,77 @@ fn draw_layer(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &Built
         GeomSpec::Boxplot => draw_boxplot(ops, l, bp, vp),
         GeomSpec::Hline => draw_hline(ops, l, bp, vp),
         GeomSpec::Vline => draw_vline(ops, l, bp, vp),
+        GeomSpec::Text => draw_text(ops, l, bp, vp),
+        GeomSpec::Area => draw_area(ops, l, bp, vp),
+    }
+}
+
+/// geom_text: labels at (x, y). size is MILLIMETRES (ggplot2 text unit);
+/// svglite renders it at size * 72.27/25.4 pt. hjust/vjust 0..1 (default .5).
+fn draw_text(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
+    let labels = l.frame.cat.get("label").cloned().unwrap_or_default();
+    if labels.is_empty() {
+        return;
+    }
+    let size_mm = l.args.f64_("size").unwrap_or(11.0 / (72.27 / 25.4));
+    let size_px = size_mm * (72.27 / 25.4);
+    let hjust = l.args.f64_("hjust").unwrap_or(0.5);
+    let vjust = l.args.f64_("vjust").unwrap_or(0.5);
+    let alpha = l.args.f64_("alpha").unwrap_or(1.0);
+    let colour = l.args.colour_(&["colour", "color"]).unwrap_or(Color::black()).with_alpha(alpha);
+    let xs = l.frame.get("x").cloned().unwrap_or_default();
+    let ys = l.frame.get("y").cloned().unwrap_or_default();
+    let style = TextStyle { size: size_px, color: colour, halign: TextAlign::Left, ..Default::default() };
+    for i in 0..labels.len().min(xs.len()).min(ys.len()) {
+        if !xs[i].is_finite() || !ys[i].is_finite() {
+            continue;
+        }
+        let (px, py) = (vp.map_x(&bp.x_scale, xs[i]), vp.map_y(&bp.y_scale, ys[i]));
+        let m = measure(&labels[i], &style);
+        // grid text justification: hjust=0 left edge at x, =1 right edge;
+        // vjust=0 box bottom (baseline-descent) at y, =1 box top (baseline+ascent) at y.
+        let x = px - hjust * m.width;
+        let baseline = py + (1.0 - vjust) * m.descent - vjust * m.ascent;
+        ops.push(Primitive::Text { content: labels[i].clone(), x, y: baseline, style: style.clone() });
+    }
+}
+
+/// geom_area: per-group filled polygon between y=0 (or ymin) and y.
+fn draw_area(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
+    let xs = l.frame.get("x").cloned().unwrap_or_default();
+    let ys = l.frame.get("y").cloned().unwrap_or_default();
+    let base = l.frame.get("ymin").cloned().unwrap_or_else(|| vec![0.0; ys.len()]);
+    let n_groups = l.group_ids.iter().cloned().max().map_or(0, |m| m + 1);
+    for g in 0..n_groups.max(1) {
+        let mut idx: Vec<usize> = (0..xs.len()).filter(|&i| n_groups <= 1 || l.group_ids.get(i) == Some(&g)).collect();
+        if idx.is_empty() {
+            continue;
+        }
+        let rep = idx[0];
+        idx.sort_by_key(|&i| (xs[i] * 1e6).round() as i64);
+        let pts: Vec<(f64, f64)> = idx
+            .iter()
+            .filter(|&&i| xs[i].is_finite() && ys[i].is_finite())
+            .map(|&i| (vp.map_x(&bp.x_scale, xs[i]), vp.map_y(&bp.y_scale, ys[i])))
+            .collect();
+        let base_pts: Vec<(f64, f64)> = idx
+            .iter()
+            .filter(|&&i| xs[i].is_finite() && base[i].is_finite())
+            .map(|&i| (vp.map_x(&bp.x_scale, xs[i]), vp.map_y(&bp.y_scale, base[i])))
+            .collect();
+        if pts.len() < 2 {
+            continue;
+        }
+        // geom_area default fill = col_mix(ink, paper, 0.2) = #333 (differs
+        // from geom_bar's #595959); honour an explicit fill aes/arg otherwise.
+        let c = if l.aes.contains_key("fill") || l.args.s("fill").is_some() {
+            fill_colour_of(l, rep, bp)
+        } else {
+            Color::rgb(51, 51, 51)
+        };
+        let mut poly = pts.clone();
+        poly.extend(base_pts.iter().rev().copied());
+        ops.push(Primitive::Polyline { points: poly, stroke: None, fill: Some(Paint::new(c)), closed: true });
     }
 }
 

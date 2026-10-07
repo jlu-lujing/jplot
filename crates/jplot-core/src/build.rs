@@ -675,6 +675,15 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
                 f.set("xmax", xs.iter().map(|x| x + w / 2.0).collect());
                 f.set("ymin", vec![0.0; f.n]);
             }
+            GeomSpec::Text => {
+                // geom_text: keep the mapped label column, nothing to compute.
+            }
+            GeomSpec::Area => {
+                // geom_area defaults to y=0 baseline (stat identity here).
+                if f.get("ymin").is_none() {
+                    f.set("ymin", vec![0.0; f.n]);
+                }
+            }
             GeomSpec::Point { .. } | GeomSpec::Line | GeomSpec::Step => {}
             GeomSpec::Freqpoly { .. } => {
                 // ggplot2 StatBin + geom_freqpoly: extend the line to y=0 one
