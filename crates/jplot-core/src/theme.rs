@@ -62,7 +62,7 @@ impl Theme {
                 panel_bg: Color::rgb(235, 235, 235), // ggplot2 4.x grey: 0.9216 → 235
                 panel_grid: paper.with_alpha(1.0),
                 panel_grid_major: true,
-                panel_grid_minor: false,
+                panel_grid_minor: true,
                 panel_border: false,
                 axis_line: false,
                 grid_x: true,

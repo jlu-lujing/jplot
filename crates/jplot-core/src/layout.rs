@@ -13,7 +13,7 @@ use crate::scale::Color;
 use crate::text::measure;
 use crate::probes;
 use crate::theme::Theme;
-use crate::theme::geom_defaults::{geom_lw, theme_lw};
+use crate::theme::geom_defaults::geom_lw;
 
 pub struct Viewport {
     pub x0: f64,
@@ -69,7 +69,7 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
         color: theme.axis_text,
         ..Default::default()
     };
-    let tick_line = Line::solid(Color::rgb(51, 51, 51), theme_lw(0.5)); // #333
+    let tick_line = Line::solid(Color::rgb(51, 51, 51), geom_lw(0.5)); // #333 @ 0.5mm→1.07 (ref probe)
     let x_lab = spec.labels.x.clone().or_else(|| auto_label_of(bp, "x")).unwrap_or_default();
     let y_lab = spec.labels.y.clone().or_else(|| auto_label_of(bp, "y")).unwrap_or_default();
 
@@ -143,8 +143,11 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
     }
 
     // --- grid ---------------------------------------------------------------
+    // Ref probe (svglite): major grid = 0.5mm → 1.07px, minor grid = 0.25mm →
+    // 0.53px, both #FFFFFF; minor lines sit at midpoints between majors and
+    // half-steps past the outer majors (R regular_minor_breaks, n = 2).
     if theme.panel_grid_major {
-        let gl = Line::solid(theme.panel_grid, theme_lw(0.5));
+        let gl = Line::solid(theme.panel_grid, geom_lw(0.5));
         for &b in &x_breaks {
             if !theme.grid_x { continue; }
             let x = vp.map_x(&bp.x_scale, b);
@@ -153,6 +156,25 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
             }
         }
         for &b in &y_breaks {
+            if !theme.grid_y { continue; }
+            let y = vp.map_y(&bp.y_scale, b);
+            if y > vp.y0 && y < vp.y1 {
+                sc.layer(layer::GRID).push(Primitive::Segment { x1: vp.x0, y1: y, x2: vp.x1, y2: y, stroke: gl.clone() });
+            }
+        }
+    }
+    if theme.panel_grid_minor {
+        let gl = Line::solid(theme.panel_grid, geom_lw(0.25));
+        let (xlo, xhi) = bp.x_scale.range();
+        let (ylo, yhi) = bp.y_scale.range();
+        for &b in &minor_breaks_of(&x_breaks, xlo, xhi) {
+            if !theme.grid_x { continue; }
+            let x = vp.map_x(&bp.x_scale, b);
+            if x > vp.x0 && x < vp.x1 {
+                sc.layer(layer::GRID).push(Primitive::Segment { x1: x, y1: vp.y0, x2: x, y2: vp.y1, stroke: gl.clone() });
+            }
+        }
+        for &b in &minor_breaks_of(&y_breaks, ylo, yhi) {
             if !theme.grid_y { continue; }
             let y = vp.map_y(&bp.y_scale, b);
             if y > vp.y0 && y < vp.y1 {
@@ -279,6 +301,29 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
     sc
 }
 
+
+/// Minor ticks matching R regular_minor_breaks (n=2): one line at each
+/// midpoint between consecutive majors, plus one half-step past the LAST
+/// major when it still fits inside the panel range (R starts the sequence at
+/// the first major, so nothing precedes it; both ends are range-clipped).
+fn minor_breaks_of(majors: &[f64], lo: f64, hi: f64) -> Vec<f64> {
+    if majors.len() < 2 {
+        return vec![];
+    }
+    let step = (majors[1] - majors[0]) / 2.0;
+    let mut out: Vec<f64> = Vec::new();
+    for w in majors.windows(2) {
+        let m = (w[0] + w[1]) / 2.0;
+        if m > lo && m < hi {
+            out.push(m);
+        }
+    }
+    let past = majors[majors.len() - 1] + step;
+    if past > lo && past < hi {
+        out.push(past);
+    }
+    out
+}
 
 fn axis_breaks(s: &BuiltScale) -> (Vec<f64>, Vec<String>) {
     match s {
