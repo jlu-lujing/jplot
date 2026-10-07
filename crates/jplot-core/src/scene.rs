@@ -80,6 +80,8 @@ pub enum Primitive {
         points: Vec<(f64, f64)>,
         stroke: Option<Line>,
         fill: Option<Paint>,
+        /// close the path (SVG <polygon>); false = open <polyline>
+        closed: bool,
     },
     /// axis tick labels: `y` is the TEXT CENTRE for horizontal text
     Text {

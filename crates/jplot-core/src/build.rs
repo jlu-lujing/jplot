@@ -250,7 +250,7 @@ fn compute_stat(f: &Frame, spec: &StatSpec) -> Frame {
             let mut out = Frame::new();
             let (mut lower, mut middle, mut upper, mut ymin, mut ymax, mut outliers) =
                 (vec![], vec![], vec![], vec![], vec![], vec![]);
-            let mut gx: Vec<usize> = vec![];
+            let (mut weight, mut nlower, mut nupper) = (vec![], vec![], vec![]);
             let mut xlab_out = Vec::new();
             let mut out_labels: Vec<String> = Vec::new();
             for (gi, &g) in keys.iter().enumerate() {
@@ -263,6 +263,7 @@ fn compute_stat(f: &Frame, spec: &StatSpec) -> Frame {
                 if vals.is_empty() {
                     continue;
                 }
+                let n = vals.len() as f64;
                 let q1 = quantile7(&vals, 0.25);
                 let q2 = quantile7(&vals, 0.5);
                 let q3 = quantile7(&vals, 0.75);
@@ -272,31 +273,35 @@ fn compute_stat(f: &Frame, spec: &StatSpec) -> Frame {
                 let inliers: Vec<f64> = vals.iter().cloned().filter(|v| *v >= lo_lim && *v <= hi_lim).collect();
                 let w_lo = inliers.iter().cloned().fold(f64::INFINITY, f64::min);
                 let w_hi = inliers.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-                gx.push(gi);
                 lower.push(q1);
                 middle.push(q2);
                 upper.push(q3);
                 ymin.push(w_lo);
                 ymax.push(w_hi);
-                xlab_out.push(match xlabels {
-                    Some(lab) => lab[g].clone(),
-                    None => gi.to_string(),
-                });
+                // ggplot2 StatBoxplot: notch = middle ± 1.58*iqr/sqrt(n);
+                // weight = n; relvarwidth = sqrt(n) (used by geom varwidth)
+                weight.push(n);
+                let notch = 1.58 * iqr / n.sqrt();
+                nlower.push(q2 - notch);
+                nupper.push(q2 + notch);
                 let lab = match xlabels {
                     Some(lab) => lab[g].clone(),
                     None => gi.to_string(),
                 };
+                xlab_out.push(lab.clone());
                 for v in vals.iter().filter(|v| **v < lo_lim || **v > hi_lim) {
                     outliers.push(*v);
                     out_labels.push(lab.clone());
                 }
             }
-            let _ = gx;
             out.set("ylower", lower);
             out.set("ymiddle", middle.clone());
             out.set("yupper", upper);
             out.set("ymin", ymin.clone());
             out.set("ymax", ymax.clone());
+            out.set("notchlower", nlower);
+            out.set("notchupper", nupper);
+            out.set("weight", weight);
             out.set("y", middle);
             out.set_cat("x", xlab_out.clone());
             if let Some(decl) = f.levels.get("x") {
@@ -560,7 +565,7 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
         // geom default width for bars/hist: 0.9 (col) / bin width (hist) / 1.0 (bar count)
         match l.geom {
             GeomSpec::Col => {
-                let w = l.args.width.unwrap_or(0.9);
+                let w = l.args.f64_("width").unwrap_or(0.9);
                 f.set("width", vec![w; f.n]);
                 let xs = f.get("x").cloned().unwrap_or_default();
                 f.set("xmin", xs.iter().map(|x| x - w / 2.0).collect());
@@ -568,7 +573,7 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
                 f.set("ymin", vec![0.0; f.n]); // ggplot2: bars extend to y=0
             }
             GeomSpec::Bar | GeomSpec::Boxplot => {
-                let w = l.args.width.unwrap_or(if matches!(l.geom, GeomSpec::Bar) { 0.9 } else { 0.75 });
+                let w = l.args.f64_("width").unwrap_or(if matches!(l.geom, GeomSpec::Bar) { 0.9 } else { 0.75 });
                 if f.get("width").is_none() {
                     f.set("width", vec![w; f.n]);
                     let xs = f.get("x").cloned().unwrap_or_default();
@@ -725,13 +730,36 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
                 .collect();
             f.set("outlier_x", ox);
         }
-        // rebuild box/bar xmin/xmax around the now-numeric x, then dodge
-        let is_barlike = matches!(spec.layers[fi].geom, GeomSpec::Col | GeomSpec::Bar | GeomSpec::Histogram { .. } | GeomSpec::Boxplot);
+        // rebuild box/bar xmin/xmax around the now-numeric x, then dodge.
+        // boxplot: width = args$width %||% 0.75; varwidth scales by
+        // sqrt(n)/max(sqrt(n)) (ggplot2 GeomBoxplot setup_data).
+        let geom = spec.layers[fi].geom.clone();
+        let is_barlike = matches!(geom, GeomSpec::Col | GeomSpec::Bar | GeomSpec::Histogram { .. } | GeomSpec::Boxplot);
         if is_barlike {
             if let Some(xs) = f.get("x").cloned() {
-                let w = f.get("width").cloned().unwrap_or_else(|| vec![0.9; xs.len()]);
+                let mut w = f.get("width").cloned().unwrap_or_else(|| vec![0.9; xs.len()]);
+                if matches!(geom, GeomSpec::Boxplot) {
+                    let base = spec.layers[fi].args.f64_("width").unwrap_or(0.75);
+                    let varwidth = spec.layers[fi].args.bool_("varwidth").unwrap_or(false);
+                    if varwidth {
+                        if let Some(ns) = f.get("weight").cloned() {
+                            let rel: Vec<f64> = ns.iter().map(|n| n.max(0.0).sqrt()).collect();
+                            let mx = rel.iter().cloned().fold(f64::EPSILON, f64::max);
+                            w = rel.iter().map(|r| base * r / mx).collect();
+                        }
+                    } else {
+                        w = vec![base; xs.len()];
+                    }
+                    // outliers = FALSE → drop the outlier layer entirely
+                    if spec.layers[fi].args.bool_("outliers") == Some(false) {
+                        f.num.remove("outlier_y");
+                        f.cat.remove("outlier_label");
+                        f.num.remove("outlier_x");
+                    }
+                }
                 let xmin: Vec<f64> = xs.iter().enumerate().map(|(i, &x)| x - w.get(i).copied().unwrap_or(0.9) / 2.0).collect();
                 let xmax: Vec<f64> = xs.iter().enumerate().map(|(i, &x)| x + w.get(i).copied().unwrap_or(0.9) / 2.0).collect();
+                f.set("width", w);
                 f.set("xmin", xmin);
                 f.set("xmax", xmax);
             }

@@ -89,68 +89,86 @@ pub enum PositionSpec {
     },
 }
 
-/// Constant aesthetic values passed to a geom (`geom_point(colour = "red")`).
+/// Aesthetic values passed to a geom as `...` (`geom_point(colour = "red")`,
+/// `geom_boxplot(outlier.colour = "red", notch = TRUE)`).
 ///
-/// A bare `[]` (R jsonlite empty list) deserialises to `GeomArgs::default()`
-/// via `GeomArgsHelper`.
+/// All ggplot2 `...` names are captured generically (R jsonlite serialises
+/// the empty list as `[]`, tolerated via the helper); typed accessors expose
+/// colour/size/bool params. The complete knob vocabulary is machine-extracted
+/// into `api_inventory.json` — docs/API_PARITY.md tracks per-geom coverage.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct GeomArgs {
+    /// all ggplot2 `...` params: name -> value (hex strings, numbers,
+    /// "TRUE"/"FALSE" as R encodes them)
+    pub map: HashMap<String, serde_json::Value>,
+}
+
+impl Serialize for GeomArgs {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut m = s.serialize_map(Some(self.map.len()))?;
+        for (k, v) in &self.map {
+            m.serialize_entry(k, v)?;
+        }
+        m.end()
+    }
+}
+
+/// `[]` (empty R list) or `{...}` object.
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum GeomArgsHelper {
     Seq(Vec<serde_json::Value>),
-    Map(GeomArgsRaw),
+    Map(HashMap<String, serde_json::Value>),
 }
 
-#[derive(Deserialize, Default)]
-struct GeomArgsRaw {
-    #[serde(default)]
-    colour: Option<String>,
-    #[serde(default)]
-    fill: Option<String>,
-    #[serde(default)]
-    size: Option<f64>,
-    #[serde(default)]
-    alpha: Option<f64>,
-    #[serde(default)]
-    linewidth: Option<f64>,
-    #[serde(default)]
-    shape: Option<f64>,
-    #[serde(default)]
-    width: Option<f64>,
-}
-
-impl From<GeomArgsHelper> for GeomArgs {
-    fn from(h: GeomArgsHelper) -> GeomArgs {
-        match h {
+impl<'de> Deserialize<'de> for GeomArgs {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(match GeomArgsHelper::deserialize(d)? {
             GeomArgsHelper::Seq(_) => GeomArgs::default(),
-            GeomArgsHelper::Map(r) => GeomArgs {
-                colour: r.colour,
-                fill: r.fill,
-                size: r.size,
-                alpha: r.alpha,
-                linewidth: r.linewidth,
-                shape: r.shape,
-                width: r.width,
-            },
-        }
+            GeomArgsHelper::Map(m) => GeomArgs { map: m },
+        })
     }
 }
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(from = "GeomArgsHelper", default)]
-pub struct GeomArgs {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub colour: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fill: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub size: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub alpha: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub linewidth: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub shape: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub width: Option<f64>,
+
+impl GeomArgs {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn set(mut self, k: impl Into<String>, v: serde_json::Value) -> Self {
+        self.map.insert(k.into(), v);
+        self
+    }
+    /// string param (colour hex, linetype name, …)
+    pub fn s(&self, key: &str) -> Option<&str> {
+        self.map.get(key).and_then(|v| v.as_str())
+    }
+    pub fn f64_(&self, key: &str) -> Option<f64> {
+        self.map.get(key).and_then(|v| match v {
+            serde_json::Value::Number(n) => n.as_f64(),
+            serde_json::Value::String(s) => s.parse().ok(),
+            serde_json::Value::Bool(b) => Some(if *b { 1.0 } else { 0.0 }),
+            _ => None,
+        })
+    }
+    pub fn bool_(&self, key: &str) -> Option<bool> {
+        self.map.get(key).and_then(|v| match v {
+            serde_json::Value::Bool(b) => Some(*b),
+            serde_json::Value::String(s) => match s.as_str() {
+                "TRUE" | "true" => Some(true),
+                "FALSE" | "false" => Some(false),
+                _ => None,
+            },
+            serde_json::Value::Number(n) => n.as_f64().map(|f| f != 0.0),
+            _ => None,
+        })
+    }
+    /// first present colour param among keys (ggplot2 colour/color aliases)
+    pub fn colour_(&self, keys: &[&str]) -> Option<crate::scale::Color> {
+        keys.iter()
+            .find_map(|k| self.s(k))
+            .and_then(crate::scale::Color::parse)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

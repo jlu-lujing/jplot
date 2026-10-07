@@ -104,14 +104,17 @@ fn draw_primitive(o: &mut String, p: &Primitive) {
             };
             o.push_str(&format!("<circle cx=\"{}\" cy=\"{}\" r=\"{}\" {f}{s}/>", trim(*cx), trim(*cy), trim(*r)));
         }
-        Primitive::Polyline { points, stroke, fill } => {
+        Primitive::Polyline { points, stroke, fill, closed } => {
             let pts: String = points.iter().map(|(x, y)| format!("{},{}", trim(*x), trim(*y))).collect::<Vec<_>>().join(" ");
             let f = fill.map(|pa| fill_attr(&pa.color)).unwrap_or_else(|| "fill=\"none\"".into());
             let s = match stroke {
                 Some(l) => format!(" stroke=\"{}\" stroke-width=\"{}\"", l.color.to_hex(), trim(l.width)),
                 None => String::new(),
             };
-            o.push_str(&format!("<polyline points=\"{pts}\" {f}{s}/>"));
+            let tag = if *closed { "polygon" } else { "polyline" };
+            // a filled+stroked closed shape must not double-stroke the closing edge
+            let s = if *closed && fill.is_some() { s.replace(" stroke=\"", " fill-rule=\"nonzero\" stroke=\"") } else { s };
+            o.push_str(&format!("<{tag} points=\"{pts}\" {f}{s}/>"));
         }
         Primitive::Segment { x1, y1, x2, y2, stroke } => {
             o.push_str(&format!(

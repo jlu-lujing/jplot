@@ -303,11 +303,9 @@ fn draw_layer(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &Built
 }
 
 fn point_colour_of(l: &crate::build::BuiltLayer, i: usize, bp: &BuiltPlot) -> Color {
-    let alpha = l.args.alpha.unwrap_or(1.0);
-    if let Some(c) = &l.args.colour {
-        if let Some(c) = Color::parse(c) {
-            return c.with_alpha(alpha);
-        }
+    let alpha = l.args.f64_("alpha").unwrap_or(1.0);
+    if let Some(c) = l.args.colour_(&["colour", "color"]) {
+        return c.with_alpha(alpha);
     }
     if l.aes.contains_key("colour") {
         if let Some(cs) = &bp.colour_scale {
@@ -327,11 +325,9 @@ fn point_colour_of(l: &crate::build::BuiltLayer, i: usize, bp: &BuiltPlot) -> Co
 }
 
 fn fill_colour_of(l: &crate::build::BuiltLayer, i: usize, bp: &BuiltPlot) -> Color {
-    let alpha = l.args.alpha.unwrap_or(1.0);
-    if let Some(c) = &l.args.fill {
-        if let Some(c) = Color::parse(c) {
-            return c.with_alpha(alpha);
-        }
+    let alpha = l.args.f64_("alpha").unwrap_or(1.0);
+    if let Some(c) = l.args.colour_(&["fill"]) {
+        return c.with_alpha(alpha);
     }
     if l.aes.contains_key("fill") {
         if let Some(cs) = &bp.fill_scale {
@@ -357,7 +353,7 @@ fn gradient_color(v: f64, all: &[f64], alpha: f64) -> Color {
 }
 
 fn draw_points(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
-    let size_px = l.args.size.unwrap_or(geom_defaults::point_size_px(11.0));
+    let size_px = l.args.f64_("size").unwrap_or(geom_defaults::point_size_px(11.0));
     let (xs, ys) = (l.frame.get("x").cloned().unwrap_or_default(), l.frame.get("y").cloned().unwrap_or_default());
     let r = size_px * 0.5;
     for i in 0..xs.len().min(ys.len()) {
@@ -377,7 +373,7 @@ fn draw_points(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &Buil
 }
 
 fn draw_lines(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
-    let width_px = l.args.linewidth.unwrap_or(mm_to_px(0.5));
+    let width_px = l.args.f64_("linewidth").unwrap_or(mm_to_px(0.5));
     let (xs, ys) = (l.frame.get("x").cloned().unwrap_or_default(), l.frame.get("y").cloned().unwrap_or_default());
     let n_groups = l.group_ids.iter().cloned().max().map_or(0, |m| m + 1);
     for g in 0..n_groups.max(1) {
@@ -402,6 +398,7 @@ fn draw_lines(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &Built
             points: pts,
             stroke: Some(Line::solid(point_colour_of(l, rep, bp), width_px)),
             fill: None,
+            closed: false,
         });
     }
 }
@@ -410,7 +407,9 @@ fn draw_bars(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltP
     let xs = l.frame.get("x").cloned().unwrap_or_default();
     let ys = l.frame.get("y").cloned().unwrap_or_default();
     // ggplot2 geom_bar/col/histogram default colour = NA (no outline).
-    let has_outline = l.aes.contains_key("colour") || l.args.colour.is_some();
+    let has_outline = l.aes.contains_key("colour")
+        || l.args.s("colour").is_some()
+        || l.args.s("color").is_some();
     let (xa_v, xb_v) = (l.frame.get("xmin").cloned(), l.frame.get("xmax").cloned());
     let w = l.frame.get("width").cloned().unwrap_or_else(|| vec![0.9; xs.len()]);
     let ys_bottom = l.frame.get("ymin").cloned().unwrap_or_else(|| vec![0.0; xs.len()]);
@@ -442,16 +441,46 @@ fn draw_bars(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltP
 
 fn draw_boxplot(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
     let g = &l.frame;
+    let a = &l.args;
     let xs = g.get("x").cloned().unwrap_or_default();
     let w = g.get("width").cloned().unwrap_or_else(|| vec![0.75; xs.len()]);
     let xmv = g.get("xmin").cloned();
     let xxv = g.get("xmax").cloned();
-    // ggplot2 4.x: boxplot colour #333, linewidth 0.5 pt (0.5/0.75 px→0.667)
-    let wp = mm_to_px(0.5);
-    let line = Line::solid(Color::rgb(51, 51, 51), wp);
+
+    // ggplot2 GeomBoxplot defaults (refs/ggplot2 + api_inventory.json):
+    //   colour = col_mix(ink,paper,0.2) = #333;  linewidth = borderwidth (0.5mm)
+    //   fill = paper(white);  median linewidth = linewidth * fatten(2)
+    //   outliers: shape 19, size = pointsize, stroke 0.5, fill NA
+    //   staplewidth = 0 → NO whisker caps drawn
+    //   notch = FALSE, notchwidth = 0.5 ; varwidth handled in build()
+    let base_colour = Color::rgb(51, 51, 51);
+    let lw = a.f64_("linewidth").unwrap_or(mm_to_px(0.5));
+    let box_colour = a.colour_(&["box.colour", "box.color"]).unwrap_or(base_colour);
+    let box_lw = a.f64_("box.linewidth").unwrap_or(lw);
+    let whisker_colour = a.colour_(&["whisker.colour", "whisker.color"]).unwrap_or(base_colour);
+    let whisker_lw = a.f64_("whisker.linewidth").unwrap_or(lw);
+    let staple_colour = a.colour_(&["staple.colour", "staple.color"]).unwrap_or(base_colour);
+    let staple_lw = a.f64_("staple.linewidth").unwrap_or(lw);
+    let median_colour = a.colour_(&["median.colour", "median.color"]).unwrap_or(base_colour);
+    let median_lw = a.f64_("median.linewidth").unwrap_or(lw * 2.0); // fatten = 2
+    let notch = a.bool_("notch").unwrap_or(false);
+    let notchwidth = a.f64_("notchwidth").unwrap_or(0.5);
+    let staplewidth = a.f64_("staplewidth").unwrap_or(0.0);
+    let box_line = Line::solid(box_colour, box_lw);
+    let median_line = Line::solid(median_colour, median_lw);
+    let whisker_line = Line::solid(whisker_colour, whisker_lw);
+    let staple_line = Line::solid(staple_colour, staple_lw);
+
     for i in 0..xs.len() {
-        let (q1, med, q3) = (g.get("ylower").map(|v| v[i]).unwrap_or(f64::NAN), g.get("ymiddle").map(|v| v[i]).unwrap_or(f64::NAN), g.get("yupper").map(|v| v[i]).unwrap_or(f64::NAN));
-        let (wlo, whi) = (g.get("ymin").map(|v| v[i]).unwrap_or(f64::NAN), g.get("ymax").map(|v| v[i]).unwrap_or(f64::NAN));
+        let (q1, med, q3) = (
+            g.get("ylower").map(|v| v[i]).unwrap_or(f64::NAN),
+            g.get("ymiddle").map(|v| v[i]).unwrap_or(f64::NAN),
+            g.get("yupper").map(|v| v[i]).unwrap_or(f64::NAN),
+        );
+        let (wlo, whi) = (
+            g.get("ymin").map(|v| v[i]).unwrap_or(f64::NAN),
+            g.get("ymax").map(|v| v[i]).unwrap_or(f64::NAN),
+        );
         let (xb0, xb1) = match (&xmv, &xxv) {
             (Some(a), Some(b)) if i < a.len() => (vp.map_x(&bp.x_scale, a[i]), vp.map_x(&bp.x_scale, b[i])),
             _ => (vp.map_x(&bp.x_scale, xs[i] - w[i] / 2.0), vp.map_x(&bp.x_scale, xs[i] + w[i] / 2.0)),
@@ -459,17 +488,67 @@ fn draw_boxplot(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &Bui
         let xc = (xb0 + xb1) / 2.0;
         let (yq1, yq3) = (vp.map_y(&bp.y_scale, q1), vp.map_y(&bp.y_scale, q3));
         let (ymed, ylo, yhi) = (vp.map_y(&bp.y_scale, med), vp.map_y(&bp.y_scale, wlo), vp.map_y(&bp.y_scale, whi));
-        ops.push(Primitive::Rect { x: xb0, y: yq1.min(yq3), w: xb1 - xb0, h: (yq3 - yq1).abs(), fill: Some(Paint::new(Color::white())), stroke: Some(line) });
-        ops.push(Primitive::Segment { x1: xb0, y1: ymed, x2: xb1, y2: ymed, stroke: line });
-        ops.push(Primitive::Segment { x1: xc, y1: yq1, x2: xc, y2: ylo, stroke: line });
-        ops.push(Primitive::Segment { x1: xc, y1: yq3, x2: xc, y2: yhi, stroke: line });
-        ops.push(Primitive::Segment { x1: xb0, y1: ylo, x2: xb1, y2: ylo, stroke: line });
-        ops.push(Primitive::Segment { x1: xb0, y1: yhi, x2: xb1, y2: yhi, stroke: line });
+
+        let has_notch = notch
+            && g.get("notchlower").map(|v| v[i]).map(|v| v.is_finite()).unwrap_or(false)
+            && g.get("notchupper").map(|v| v[i]).map(|v| v.is_finite()).unwrap_or(false);
+        if has_notch {
+            // GeomCrossbar box polygon (refs/ggplot2/R/geom-crossbar.R)
+            let nlo = g.get("notchlower").unwrap()[i];
+            let nhi = g.get("notchupper").unwrap()[i];
+            let ind = (1.0 - notchwidth) * (xb1 - xb0) / 2.0;
+            let (ynlo, ynhi) = (vp.map_y(&bp.y_scale, nlo), vp.map_y(&bp.y_scale, nhi));
+            let pts = vec![
+                (xb0, yq3), (xb0, ynhi), (xb0 + ind, ymed), (xb0, ynlo), (xb0, yq1),
+                (xb1, yq1), (xb1, ynlo), (xb1 - ind, ymed), (xb1, ynhi), (xb1, yq3),
+            ];
+            ops.push(Primitive::Polyline { points: pts, stroke: Some(box_line), fill: Some(Paint::new(Color::white())), closed: true });
+            ops.push(Primitive::Segment { x1: xb0 + ind, y1: ymed, x2: xb1 - ind, y2: ymed, stroke: median_line });
+        } else {
+            ops.push(Primitive::Rect {
+                x: xb0, y: yq3.min(yq1), w: xb1 - xb0, h: (yq1 - yq3).abs(),
+                fill: Some(Paint::new(Color::white())), stroke: Some(box_line),
+            });
+            ops.push(Primitive::Segment { x1: xb0, y1: ymed, x2: xb1, y2: ymed, stroke: median_line });
+        }
+        // whiskers: vertical centre line, box→whisker extreme (both ends)
+        ops.push(Primitive::Segment { x1: xc, y1: yq3, x2: xc, y2: yhi, stroke: whisker_line });
+        ops.push(Primitive::Segment { x1: xc, y1: yq1, x2: xc, y2: ylo, stroke: whisker_line });
+        // staples only when staplewidth != 0
+        if staplewidth != 0.0 {
+            let half = (xb1 - xb0) * staplewidth / 2.0;
+            ops.push(Primitive::Segment { x1: xc - half, y1: yhi, x2: xc + half, y2: yhi, stroke: staple_line });
+            ops.push(Primitive::Segment { x1: xc - half, y1: ylo, x2: xc + half, y2: ylo, stroke: staple_line });
+        }
     }
+    // outliers (only if not dropped via outliers=FALSE)
     if let (Some(ox), Some(oy)) = (g.get("outlier_x"), g.get("outlier_y")) {
-        let r = geom_defaults::point_size_px(11.0) * 0.5;
+        let shape = a.f64_("outlier.shape").unwrap_or(19.0);
+        let size_px = a.f64_("outlier.size").map(|s| s / 25.4 * 72.0).unwrap_or(geom_defaults::point_size_px(11.0));
+        let r = size_px * 0.5;
+        let stroke_w = a.f64_("outlier.stroke").unwrap_or(mm_to_px(0.5));
+        let o_colour = a.colour_(&["outlier.colour", "outlier.color"]).unwrap_or(base_colour);
+        let o_fill = a.colour_(&["outlier.fill"]);
+        let alpha = a.f64_("outlier.alpha");
+        let o_colour = match alpha { Some(al) => o_colour.with_alpha(al), None => o_colour };
         for i in 0..ox.len() {
-            ops.push(Primitive::Circle { cx: vp.map_x(&bp.x_scale, ox[i]), cy: vp.map_y(&bp.y_scale, oy[i]), r, fill: Some(Paint::new(Color::white())), stroke: Some(Line::solid(Color::rgb(51, 51, 51), mm_to_px(0.5))) });
+            let (cx, cy) = (vp.map_x(&bp.x_scale, ox[i]), vp.map_y(&bp.y_scale, oy[i]));
+            // shapes: 19 solid circle; 17 solid triangle; 1/0 open circle; 21 fill+stroke
+            match shape as i32 {
+                17 | 2 => {
+                    let pts = vec![(cx, cy - r * 1.15), (cx - r, cy + r * 0.8), (cx + r, cy + r * 0.8)];
+                    let solid = shape as i32 == 17;
+                    ops.push(Primitive::Polyline {
+                        points: pts,
+                        stroke: Some(Line::solid(o_colour, if solid { stroke_w } else { mm_to_px(0.5) })),
+                        fill: if solid { Some(Paint::new(o_fill.unwrap_or(o_colour))) } else { o_fill.map(Paint::new) },
+                        closed: true,
+                    });
+                }
+                21 => ops.push(Primitive::Circle { cx, cy, r, fill: Some(Paint::new(o_fill.unwrap_or(Color::white()))), stroke: Some(Line::solid(o_colour, stroke_w)) }),
+                0 | 1 => ops.push(Primitive::Circle { cx, cy, r, fill: o_fill.map(Paint::new), stroke: Some(Line::solid(o_colour, mm_to_px(0.5))) }),
+                _ => ops.push(Primitive::Circle { cx, cy, r, fill: Some(Paint::new(o_colour)), stroke: None }),
+            }
         }
     }
 }

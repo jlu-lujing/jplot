@@ -121,6 +121,22 @@ ds <- data.frame(
 save("07_line", spec(ds, list(x = "x", y = "y", colour = "g"), list(layer("line"))))
 render("07_line", ggplot(ds, aes(x, y, colour = g)) + geom_line())
 
+## 09 boxplot with outlier/median/box colour overrides ------------------------
+save("09_box_custom", spec(df, list(x = "cyl", y = "mpg"), list(layer("boxplot", args = list(
+  `outlier.colour` = "red", `median.colour` = "blue", `median.linewidth` = 1.5,
+  `box.colour` = "#00AA00", notch = "TRUE", outlier.shape = 17)))))
+render("09_box_custom", ggplot(df, aes(cyl, mpg)) + geom_boxplot(
+  outlier.colour = "red", median.colour = "blue", median.linewidth = 1.5,
+  box.colour = "#00AA00", notch = TRUE, outlier.shape = 17))
+
+## 10 boxplot varwidth + whisker/staple/box linewidth -------------------------
+save("10_box_vw", spec(df, list(x = "cyl", y = "mpg"), list(layer("boxplot", args = list(
+  varwidth = "TRUE", `box.linewidth` = 1.2, `whisker.colour` = "#770000",
+  `staple.colour` = "#000077", `outlier.size` = 3)))))
+render("10_box_vw", ggplot(df, aes(cyl, mpg)) + geom_boxplot(
+  varwidth = TRUE, box.linewidth = 1.2, whisker.colour = "#770000",
+  staple.colour = "#000077", outlier.size = 3))
+
 ## 08 col with labels ------------------------------------------------------
 ds2 <- data.frame(g = c("a", "b", "c"), v = c(3, 7, 5))
 save("08_col", spec(ds2, list(x = "g", y = "v"), list(layer("col")),

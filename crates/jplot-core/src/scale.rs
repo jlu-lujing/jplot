@@ -10,6 +10,12 @@ use crate::data::{Column, Range};
 // Colours
 // ---------------------------------------------------------------------------
 
+/// ggplot2 `col_mix(ink, paper, p)`: linear mix ink→paper.
+pub fn col_mix(p: f64) -> Color {
+    let v = (p * 255.0).round().clamp(0.0, 255.0) as u8;
+    Color::rgb(v, v, v)
+}
+
 /// sRGB colour with alpha 0..=1.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Color {
