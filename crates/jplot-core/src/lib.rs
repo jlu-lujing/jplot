@@ -2,6 +2,7 @@ pub mod aes_registry;
 pub mod build;
 pub mod data;
 pub mod error;
+pub mod geom;
 pub mod layout;
 pub mod probes;
 pub mod scene;
