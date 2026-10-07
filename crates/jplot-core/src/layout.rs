@@ -455,20 +455,18 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
 fn transpose(p: &mut Primitive, vp: &Viewport) {
     let w = vp.x1 - vp.x0;
     let h = vp.y1 - vp.y0;
-    // coord_flip data transform: new px = px0 + (py − y0)·w/h (old panel
-    // BOTTOM edge → left), new py = y1 − (px − x0)·h/w (old left edge →
-    // bottom). Continuous data keeps left→right; discrete level 1 lands at
-    // the bottom = ggplot2's reversed discrete y-axis under coord_flip
-    // (probe 50: ref cyl 4@368/6@230/8@92).
+    // coord_flip data transform: new px = px0 + (y1 − py)·w/h (the panel's
+    // TOP edge becomes the LEFT edge ⇒ continuous y-data keeps ascending
+    // left→right: ref probe 50 cyl=8 (low mpg) box at x=166, cyl=4 at 389);
+    // new py = y1 − (px − x0)·h/w (old left → bottom ⇒ level 1 at the bottom,
+    // cyl 4@369 / 8@92 as in the reference).
     let tx = |x: f64, y: f64| -> (f64, f64) {
-        (vp.x0 + (y - vp.y0) * (w / h), vp.y1 - (x - vp.x0) * (h / w))
+        (vp.x0 + (vp.y1 - y) * (w / h), vp.y1 - (x - vp.x0) * (h / w))
     };
     match p {
         Primitive::Rect { x, y, w: rw, h: rh, .. } => {
-            // spans of the transformed corners (panel is NOT square: extents
-            // scale by the axis ratios)
-            let (nx, _) = tx(*x, *y); // left edge = image of old top-left.y
-            let (_, ny) = tx(*x + *rw, *y); // top edge = image of old right.x
+            // image of the old BOTTOM-RIGHT corner is the new top-left
+            let (nx, ny) = tx(*x + *rw, *y + *rh);
             let (nw, nh) = (*rh * (w / h), *rw * (h / w));
             *x = nx;
             *y = ny;

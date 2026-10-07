@@ -38,8 +38,94 @@ pub fn draw_layer(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &B
         GeomSpec::Jitter => draw_points(ops, l, bp, vp),
         GeomSpec::Label => draw_label(ops, l, bp, vp),
         GeomSpec::Density => draw_lines(ops, l, bp, vp),
+        GeomSpec::Smooth => draw_smooth(ops, l, bp, vp),
         GeomSpec::Violin => draw_violin(ops, l, bp, vp),
     }
+}
+
+/// geom_smooth: optional se ribbon (fill col_mix(ink,paper,.6)·alpha .4,
+/// band border blank) then the fitted line (accent, 2×linewidth default).
+fn draw_smooth(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
+    let g = &l.frame;
+    let xs = g.get("x").cloned().unwrap_or_default();
+    let ys = g.get("y").cloned().unwrap_or_default();
+    let ylo = g.get("ymin").cloned();
+    let yhi = g.get("ymax").cloned();
+    // ribbon first (under the line) when present
+    if let (Some(a), Some(b)) = (ylo.clone(), yhi.clone()) {
+        let n = xs.len().min(ys.len()).min(a.len()).min(b.len());
+        let mut poly: Vec<(f64, f64)> = Vec::with_capacity(2 * n);
+        for i in 0..n {
+            if !(xs[i].is_finite() && a[i].is_finite()) {
+                continue;
+            }
+            poly.push((vp.map_x(&bp.x_scale, xs[i]), vp.map_y(&bp.y_scale, a[i])));
+        }
+        for i in (0..n).rev() {
+            if !(xs[i].is_finite() && b[i].is_finite()) {
+                continue;
+            }
+            poly.push((vp.map_x(&bp.x_scale, xs[i]), vp.map_y(&bp.y_scale, b[i])));
+        }
+        if poly.len() >= 3 {
+            let band = l.args.colour_(&["band.colour", "band.color"]).unwrap_or(Color::transparent());
+            ops.push(Primitive::Polyline {
+                points: poly,
+                stroke: if band.a > 0.0 { Some(Line::solid(band, geom_lw(0.5))) } else { None },
+                fill: Some(Paint::new(Color::rgb(153, 153, 153).with_alpha(l.args.f64_("alpha").unwrap_or(0.4)))),
+                closed: true,
+            });
+        }
+    }
+    // line: grouped by x label (discrete) or one polyline per label-change
+    let cats = g.cat.get("x").cloned();
+    let n = xs.len().min(ys.len());
+    match cats {
+        Some(c) if !c.is_empty() => {
+            let mut groups: Vec<(String, Vec<(f64, f64)>)> = Vec::new();
+            for i in 0..n {
+                if !(xs[i].is_finite() && ys[i].is_finite()) {
+                    continue;
+                }
+                let lab = c.get(i).cloned().unwrap_or_default();
+                match groups.iter_mut().find(|(k, _)| *k == lab) {
+                    Some((_, v)) => v.push((xs[i], ys[i])),
+                    None => groups.push((lab, vec![(xs[i], ys[i])])),
+                }
+            }
+            for (gi, (_, pts)) in groups.iter().enumerate() {
+                let mut p: Vec<(f64, f64)> = pts
+                    .iter()
+                    .map(|(x, y)| (vp.map_x(&bp.x_scale, *x), vp.map_y(&bp.y_scale, *y)))
+                    .collect();
+                p.sort_by_key(|(x, _)| (*x * 1e6).round() as i64);
+                push_smooth_line(ops, l, bp, &mut p, gi);
+            }
+        }
+        _ => {
+            let mut p: Vec<(f64, f64)> = (0..n)
+                .filter(|&i| xs[i].is_finite() && ys[i].is_finite())
+                .map(|i| (vp.map_x(&bp.x_scale, xs[i]), vp.map_y(&bp.y_scale, ys[i])))
+                .collect();
+            p.sort_by_key(|(x, _)| (*x * 1e6).round() as i64);
+            if p.len() >= 2 {
+                push_smooth_line(ops, l, bp, &mut p, 0);
+            }
+        }
+    }
+}
+
+fn push_smooth_line(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, p: &mut [(f64, f64)], group: usize) {
+    if p.len() < 2 {
+        return;
+    }
+    let lw = l.args.f64_("linewidth").map(geom_lw).unwrap_or(geom_lw(1.0)); // 2× borderwidth
+    ops.push(Primitive::Polyline {
+        points: p.to_vec(),
+        stroke: Some(line_style_of(l, group, bp, lw)),
+        fill: None,
+        closed: false,
+    });
 }
 
 /// geom_violin (stat ydensity): mirrored polygon x ± width/2·violinwidth at
@@ -605,7 +691,9 @@ pub fn push_glyph(ops: &mut Vec<Primitive>, shape: i32, cx: f64, cy: f64, r: f64
     match shape {
         0 | 15 | 22 => ops.push(Primitive::Rect { x: cx - r, y: cy - r, w: 2.0 * r, h: 2.0 * r, fill: if interior.a == 0.0 { None } else { Some(Paint::new(interior)) }, stroke: if border.a == 0.0 { None } else { Some(stroke) } }),
         20 => ops.push(Primitive::Circle { cx, cy, r: r * probes::glyph::DOT_RATIO, fill: Some(Paint::new(col)), stroke: None }),
-        s if matches!(s, 1 | 16 | 19 | 21) => ops.push(Primitive::Circle { cx, cy, r, fill: if interior.a == 0.0 { None } else { Some(Paint::new(interior)) }, stroke: if border.a == 0.0 { None } else { Some(stroke) } }),
+        // pch 1: open circle (stroke only, no fill)
+        1 => ops.push(Primitive::Circle { cx, cy, r, fill: None, stroke: Some(Line::solid(col, point_stroke(0.5))) }),
+        s if matches!(s, 16 | 19 | 21) => ops.push(Primitive::Circle { cx, cy, r, fill: if interior.a == 0.0 { None } else { Some(Paint::new(interior)) }, stroke: if border.a == 0.0 { None } else { Some(stroke) } }),
         2 | 17 | 24 => ops.push(Primitive::Polyline { points: tri_up(r), stroke: if border.a == 0.0 { None } else { Some(stroke) }, fill: if interior.a == 0.0 { None } else { Some(Paint::new(interior)) }, closed: true }),
         25 => ops.push(Primitive::Polyline { points: tri_dn(r), stroke: Some(stroke), fill: if interior.a == 0.0 { None } else { Some(Paint::new(interior)) }, closed: true }),
         5 | 18 | 23 => ops.push(Primitive::Polyline { points: vec![(cx, cy - r), (cx + r, cy), (cx, cy + r), (cx - r, cy)], stroke: if border.a == 0.0 { None } else { Some(stroke) }, fill: if interior.a == 0.0 { None } else { Some(Paint::new(interior)) }, closed: true }),

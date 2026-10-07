@@ -89,6 +89,8 @@ pub enum GeomSpec {
     Label,
     /// geom_density: KDE line
     Density,
+    /// geom_smooth: fitted line + optional se ribbon
+    Smooth,
     /// geom_violin: mirrored KDE polygon + median bar
     Violin,
 }
@@ -120,6 +122,21 @@ pub enum StatSpec {
         /// "right" (default) | "left"
         #[serde(default, skip_serializing_if = "Option::is_none")]
         closed: Option<String>,
+    },
+    /// local regression smoother (ggplot2 StatSmooth): method "lm" | "loess"
+    /// (default: loess when the largest group n < 1000), 80-point grid,
+    /// optional 95% confidence ribbon (se)
+    Smooth {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        method: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        span: Option<f64>,
+        #[serde(default = "default_true", skip_serializing_if = "std::ops::Not::not")]
+        se: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        n: Option<usize>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        fullrange: bool,
     },
     /// gaussian KDE over a 512-point grid (R stats::density semantics:
     /// nrd0 bandwidth, ±3·bw grid unless trim)

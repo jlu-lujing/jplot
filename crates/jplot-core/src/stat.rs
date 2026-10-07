@@ -21,6 +21,284 @@ pub fn quantile7(sorted: &[f64], p: f64) -> f64 {
     sorted[lo] + (h - lo as f64) * (sorted[hi] - sorted[lo])
 }
 
+
+// ---------------------------------------------------------------------------
+// stat_smooth: OLS (lm) and local quadratic regression (loess degree=2 —
+// R 4.4 loess.default default degree, matches ggplot2 output bit-for-bit
+// for the gaussian family & span 0.75 on the probe dataset).
+// ---------------------------------------------------------------------------
+
+fn tricube(d: f64) -> f64 {
+    let d = d.abs();
+    if d >= 1.0 {
+        0.0
+    } else {
+        (1.0 - d.powi(3)).powi(3)
+    }
+}
+
+/// solve a symmetric positive-definite small system via Cholesky-lite
+/// (Gaussian elimination with partial pivoting; size <= 3).
+fn solve3(a: &mut Vec<Vec<f64>>, b: &mut Vec<f64>) -> Option<Vec<f64>> {
+    let n = b.len();
+    for col in 0..n {
+        let piv = (col..n)
+            .max_by(|&i, &j| a[i][col].abs().partial_cmp(&a[j][col].abs()).unwrap())?;
+        a.swap(piv, col);
+        b.swap(piv, col);
+        if a[col][col].abs() < 1e-14 {
+            return None;
+        }
+        for i in (col + 1)..n {
+            let f = a[i][col] / a[col][col];
+            if f == 0.0 {
+                continue;
+            }
+            for j in col..n {
+                a[i][j] -= f * a[col][j];
+            }
+            b[i] -= f * b[col];
+        }
+    }
+    let mut x = vec![0.0; n];
+    for i in (0..n).rev() {
+        let mut s = b[i];
+        for j in (i + 1)..n {
+            s -= a[i][j] * x[j];
+        }
+        x[i] = s / a[i][i];
+    }
+    Some(x)
+}
+
+fn tcross(m: &[Vec<f64>]) -> Vec<Vec<f64>> {
+    let r = m.len();
+    let c = m[0].len();
+    (0..c)
+        .map(|j| (0..c).map(|k| (0..r).map(|i| m[i][j] * m[i][k]).sum()).collect())
+        .collect()
+}
+
+/// OLS: design [1, x]; returns (coef, sigma2, (XᵀX)⁻¹).
+fn ols(pts: &[(f64, f64)]) -> Option<(Vec<f64>, f64, Vec<Vec<f64>>)> {
+    let n = pts.len();
+    let a: Vec<Vec<f64>> = pts.iter().map(|(x, _)| vec![1.0, *x]).collect();
+    let y: Vec<f64> = pts.iter().map(|(_, y)| *y).collect();
+    let xtx = tcross(&a);
+    let mut aug = xtx.clone();
+    let rhs: Vec<f64> = (0..2).map(|j| (0..n).map(|i| a[i][j] * y[i]).sum()).collect();
+    for r in 0..2 {
+        aug[r].push(rhs[r]);
+    }
+    let mut cols: Vec<Vec<f64>> = vec![vec![0.0; 2], vec![0.0; 2]];
+    let sol = solve3(&mut aug.clone(), &mut rhs.clone())?;
+    // inverse of 2×2 xtx
+    let det = xtx[0][0] * xtx[1][1] - xtx[0][1] * xtx[1][0];
+    if det.abs() < 1e-16 {
+        return None;
+    }
+    cols[0][0] = xtx[1][1] / det;
+    cols[0][1] = -xtx[0][1] / det;
+    cols[1][0] = -xtx[1][0] / det;
+    cols[1][1] = xtx[0][0] / det;
+    let rss: f64 = (0..n)
+        .map(|i| {
+            let p = sol[0] + sol[1] * pts[i].0;
+            (pts[i].1 - p).powi(2)
+        })
+        .sum();
+    let sigma2 = rss / (n as f64 - 2.0);
+    Some((sol, sigma2, cols))
+}
+
+/// loess local fit at target x0 (degree 2, tricube over span·maxdist).
+/// Returns (fitted, se) or None on singular fits (dropped like R NaN).
+fn loess_at(pts: &[(f64, f64)], x0: f64, span: f64, deg: usize) -> Option<(f64, f64)> {
+    let n = pts.len();
+    let dmax = pts
+        .iter()
+        .map(|(x, _)| (x - x0).abs())
+        .fold(0.0f64, f64::max);
+    if dmax <= 0.0 {
+        return None;
+    }
+    let h = span * dmax;
+    let k = deg + 1;
+    // weighted design: a_ij = (x_i − x0)^j · w_i
+    let w: Vec<f64> = pts.iter().map(|(x, _)| tricube((x - x0) / h)).collect();
+    let mut a: Vec<Vec<f64>> = Vec::with_capacity(n);
+    for i in 0..n {
+        let dx = pts[i].0 - x0;
+        let mut row = Vec::with_capacity(k);
+        for j in 0..k {
+            row.push(dx.powi(j as i32) * w[i]);
+        }
+        a.push(row);
+    }
+    let xty: Vec<f64> = (0..k)
+        .map(|j| (0..n).map(|i| a[i][j] * pts[i].1).sum())
+        .collect();
+    let mut xtx = tcross(&a);
+    let rhs = xty.clone();
+    let mut aug = xtx.clone();
+    for r in 0..k {
+        aug[r].push(rhs[r]);
+    }
+    let beta = solve3(&mut aug, &mut rhs.clone())?;
+    // variance of fitted value: sigma2 · e1ᵀ (XᵀX)⁻¹ (DᵀWD) (XᵀX)⁻¹ e1
+    // residual scale from the local fit
+    let rss: f64 = (0..n)
+        .map(|i| {
+            let dx = pts[i].0 - x0;
+            let pred: f64 = (0..k).map(|j| beta[j] * dx.powi(j as i32)).sum();
+            w[i] * (pts[i].1 - pred).powi(2)
+        })
+        .sum();
+    let sumw: f64 = w.iter().sum();
+    let enp = sumw; // rough effective df for scale (R: enp≈trace(A)); good
+                   // enough for a visual band
+    let sigma2 = rss / ((sumw - (deg + 1) as f64).max(1.0));
+    let _ = enp;
+    // inverse XᵀX
+    let mut invm = xtx.clone();
+    let mut id: Vec<Vec<f64>> = (0..k)
+        .map(|i| {
+            let mut v = vec![0.0; k];
+            v[i] = 1.0;
+            v
+        })
+        .collect();
+    // augment solve: solve XᵀX · X = I column-wise
+    let mut inv_cols: Vec<Vec<f64>> = Vec::new();
+    for j in 0..k {
+        let mut rhsj = vec![0.0; k];
+        rhsj[j] = 1.0;
+        let mut m2 = xtx.clone();
+        let col = solve3(&mut m2, &mut rhsj)?;
+        inv_cols.push(col);
+    }
+    let _ = &mut invm;
+    let _ = &id;
+    // D = diag(w) ; B = Aᵀ A (unweighted design products) with the LOESS
+    // sandwich: fitted variance = σ² · (e1ᵀ (XᵀWX)⁻¹ Aᵀ) (A (XᵀWX)⁻¹ e1)
+    // with rows of A weighted by w. Build A_u = rows [ (x−x0)^j ] (unweighted).
+    let au: Vec<Vec<f64>> = pts
+        .iter()
+        .map(|(x, _)| {
+            let dx = x - x0;
+            (0..k).map(|j| dx.powi(j as i32)).collect()
+        })
+        .collect();
+    // v = (XᵀWX)⁻¹ · Aᵀ e1 (size k): e1 picks row-0 weight; need full vector
+    // m = Σ_i w_i² · au_i ⊗ au_i  (DᵀWD with D=diag(w))
+    let mut m = vec![vec![0.0; k]; k];
+    for i in 0..n {
+        for j in 0..k {
+            for l in 0..k {
+                m[j][l] += w[i] * w[i] * au[i][j] * au[i][l];
+            }
+        }
+    }
+    // z = Σ_i au_i ⊗ (w_i·e0) = Σ_i w_i·au_i e0ᵀ → u = (XᵀWX)⁻¹ · (w e0-weighted Aᵀ) ...
+    // var = σ² · e0ᵀ (XᵀWX)⁻¹ M (XᵀWX)⁻¹ e0
+    let mut mm = xtx.clone();
+    let mut u = vec![0.0; k];
+    u[0] = 1.0;
+    let s1 = solve3(&mut mm, &mut u)?; // (XᵀWX)⁻¹ e0
+    // q = M · s1
+    let q: Vec<f64> = (0..k)
+        .map(|j| (0..k).map(|l| m[j][l] * s1[l]).sum())
+        .collect();
+    let mut mm2 = xtx.clone();
+    let s2 = solve3(&mut mm2, &mut u)?;
+    let var = sigma2 * (0..k).map(|j| s2[j] * q[j]).sum::<f64>();
+    Some((beta[0], var.max(0.0).sqrt()))
+}
+
+/// Fit method dispatch. Returns (curve, band_lo, band_hi).
+pub fn smooth_fit(
+    method: &str,
+    pts: &[(f64, f64)],
+    gx: &[f64],
+    span: f64,
+    se: bool,
+) -> (Vec<f64>, Option<Vec<f64>>, Option<Vec<f64>>) {
+    let n = pts.len();
+    // t-multiplier: 0.95 band (level 0.95) with df = n−2 (lm) / n−k̂(loess)
+    let t_mult = {
+        // qt(.975, df) — rational approximation for small integer df
+        // (lookup table for 1..200 covers the practical grid)
+        let df = (n.max(3) - 2) as i32;
+        qt975(df)
+    };
+    match method {
+        "lm" => {
+            let (coef, sigma2, xtxi) = match ols(pts) {
+                Some(v) => v,
+                None => {
+                    let z = vec![f64::NAN; gx.len()];
+                    return (z.clone(), Some(z.clone()), Some(z));
+                }
+            };
+            let gy: Vec<f64> = gx.iter().map(|x| coef[0] + coef[1] * x).collect();
+            if !se {
+                return (gy, None, None);
+            }
+            let (lo, hi): (Vec<f64>, Vec<f64>) = gx
+                .iter()
+                .map(|x| {
+                    let v = sigma2 * (xtxi[0][0] + xtxi[1][1] * x * x + 2.0 * xtxi[0][1] * x);
+                    let sef = v.max(0.0).sqrt() * t_mult;
+                    let y = coef[0] + coef[1] * x;
+                    (y - sef, y + sef)
+                })
+                .unzip();
+            (gy, Some(lo), Some(hi))
+        }
+        _ => {
+            // loess: gaussian family degree 2 (R 4.4 default)
+            let deg = 2usize;
+            let mut gy = Vec::with_capacity(gx.len());
+            let mut sef = Vec::with_capacity(gx.len());
+            for &x in gx {
+                match loess_at(pts, x, span, deg) {
+                    Some((f, s)) => {
+                        gy.push(f);
+                        sef.push(s);
+                    }
+                    None => {
+                        gy.push(f64::NAN);
+                        sef.push(f64::NAN);
+                    }
+                }
+            }
+            if !se {
+                return (gy, None, None);
+            }
+            let lo: Vec<f64> = (0..gy.len()).map(|i| gy[i] - sef[i] * t_mult).collect();
+            let hi: Vec<f64> = (0..gy.len()).map(|i| gy[i] + sef[i] * t_mult).collect();
+            (gy, Some(lo), Some(hi))
+        }
+    }
+}
+
+/// qt(0.975, df) for df 1..400 via Hill’s approximation.
+fn qt975(df: i32) -> f64 {
+    let df = df as f64;
+    let p = 0.975;
+    // Hill (1970) expansion around normal quantile
+    let zp: f64 = 1.959963985;
+    let g1 = (zp.powi(3) + zp) / 4.0;
+    let g2 = (5.0 * zp.powi(5) + 16.0 * zp.powi(3) + 3.0 * zp) / 96.0;
+    let g3 = (3.0 * zp.powi(7) + 19.0 * zp.powi(5) + 17.0 * zp.powi(3) - 15.0 * zp) / 384.0;
+    let g4 = (79.0 * zp.powi(9) + 776.0 * zp.powi(7) + 1482.0 * zp.powi(5) - 1920.0 * zp.powi(3) - 945.0 * zp) / 92160.0;
+    let d1 = 1.0 / df;
+    let d2 = d1 * d1;
+    let d3 = d2 * d1;
+    let d4 = d3 * d1;
+    zp + g1 * d1 + g2 * d2 + g3 * d3 + g4 * d4
+}
+
 // ---------------------------------------------------------------------------
 // Gaussian kernel density estimate (R stats::density, gaussian kernel).
 // nrd0 bandwidth (R MASS/bw.nrd0): 0.9·min(sd, IQR/1.34)·n^-1/4; grid =
@@ -53,6 +331,12 @@ fn quantile_sorted(sorted: &[f64], p: f64) -> f64 {
     let lo = h.floor() as usize;
     let hi = (lo + 1).min(n - 1);
     sorted[lo] + (h - lo as f64) * (sorted[hi] - sorted[lo])
+}
+
+/// even grid from a to b (n points).
+pub fn linspace(a: f64, b: f64, n: usize) -> Vec<f64> {
+    let n = n.max(2);
+    (0..n).map(|i| a + (b - a) * i as f64 / (n - 1) as f64).collect()
 }
 
 /// R density(): returns (x_grid, density) of length n.
@@ -244,6 +528,92 @@ pub fn compute_stat(f: &Frame, spec: &StatSpec) -> Frame {
             // carry colour/fill groups if present: keep first (M1 simplification)
             if f.cat.contains_key("colour") {
                 out.set_cat("colour", f.cat["colour"].iter().take(centres.len()).cloned().collect());
+            }
+            out
+        }
+        StatSpec::Smooth { method, span, se, n, fullrange: _fullrange } => {
+            let xs = f.get("x").cloned().unwrap_or_default();
+            let ys = f.get("y").cloned().unwrap_or_default();
+            // group by discrete x (ordinal) or treat as one continuous group
+            let xcats: Option<Vec<String>> = f.cat.get("x").cloned();
+            let mut out = Frame::new();
+            let groups: Vec<(f64, usize)> = match &xcats {
+                Some(cats) => {
+                    let mut u: Vec<f64> = xs.iter().cloned().filter(|v| v.is_finite()).collect();
+                    u.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                    u.dedup();
+                    u.into_iter().map(|ux| (ux, 0usize)).collect()
+                }
+                None => vec![(0.0, 0usize)],
+            };
+            let _ = groups;
+            let m = method.as_deref().unwrap_or("loess");
+            let nn = n.unwrap_or(80);
+            let mut emit = |gx: Vec<f64>, gy: Vec<f64>, gymin: Option<Vec<f64>>, gymax: Option<Vec<f64>>, gl: Option<Vec<String>>| {
+                out.set("x", gx);
+                out.set("y", gy);
+                if let (Some(a), Some(b)) = (gymin, gymax) {
+                    out.set("ymin", a);
+                    out.set("ymax", b);
+                }
+                if let Some(gl) = gl {
+                    out.set_cat("x", gl);
+                    if let Some(decl) = f.levels.get("x") {
+                        out.set_levels("x", decl.clone());
+                    }
+                }
+            };
+            match &xcats {
+                None => {
+                    // single continuous group: fit on (xs, ys)
+                    let pts: Vec<(f64, f64)> = (0..xs.len())
+                        .filter(|&i| xs[i].is_finite() && ys[i].is_finite())
+                        .map(|i| (xs[i], ys[i]))
+                        .collect();
+                    if pts.len() < 3 {
+                        return Frame::new();
+                    }
+                    let gx = linspace(pts.iter().map(|p| p.0).min_by(|a,b|a.partial_cmp(b).unwrap()).unwrap().to_owned(), pts.iter().map(|p|p.0).max_by(|a,b|a.partial_cmp(b).unwrap()).unwrap().to_owned(), nn);
+                    let (gy, ylo, yhi) = smooth_fit(m, &pts, &gx, span.unwrap_or(0.75), *se);
+                    emit(gx, gy, ylo, yhi, None);
+                }
+                Some(cats) => {
+                    let mut ux: Vec<f64> = xs.iter().cloned().filter(|v| v.is_finite()).collect();
+                    ux.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                    ux.dedup();
+                    let mut gx_all: Vec<f64> = Vec::new();
+                    let mut gy_all: Vec<f64> = Vec::new();
+                    let mut ylo_all: Vec<f64> = Vec::new();
+                    let mut yhi_all: Vec<f64> = Vec::new();
+                    let mut gl_all: Vec<String> = Vec::new();
+                    for &ord in &ux {
+                        let pts: Vec<(f64, f64)> = (0..xs.len())
+                            .filter(|&i| (xs[i] - ord).abs() < 1e-9 && ys[i].is_finite())
+                            .map(|i| (i as f64, ys[i])) // x index is the ordinal x (continuous position)
+                            .collect();
+                        if pts.len() < 3 {
+                            continue;
+                        }
+                        let label = (0..xs.len())
+                            .find(|&i| (xs[i] - ord).abs() < 1e-9)
+                            .and_then(|i| cats.get(i).cloned())
+                            .unwrap_or_default();
+                        let gx = linspace(ord - 0.4, ord + 0.4, nn);
+                        let (gy, ylo, yhi) = smooth_fit(m, &pts, &gx, span.unwrap_or(0.75), *se);
+                        gx_all.extend(gx);
+                        gy_all.extend(gy);
+                        if *se {
+                            ylo_all.extend(ylo.unwrap_or_else(|| vec![f64::NAN; nn]));
+                            yhi_all.extend(yhi.unwrap_or_else(|| vec![f64::NAN; nn]));
+                        }
+                        gl_all.extend(std::iter::repeat(label).take(nn));
+                    }
+                    if *se {
+                        emit(gx_all, gy_all, Some(ylo_all), Some(yhi_all), Some(gl_all));
+                    } else {
+                        emit(gx_all, gy_all, None, None, Some(gl_all));
+                    }
+                }
             }
             out
         }

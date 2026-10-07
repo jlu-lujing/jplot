@@ -190,6 +190,13 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
                 closed: l.args.s("closed").map(|s| s.to_string()),
             },
             GeomSpec::Density => StatSpec::Density { bw: None, adjust: None, n: None, trim: false },
+            GeomSpec::Smooth => StatSpec::Smooth {
+                method: l.args.s("method").map(|s| s.to_string()),
+                span: l.args.f64_("span"),
+                se: l.args.bool_("se").unwrap_or(true),
+                n: l.args.f64_("n").map(|v| v as usize),
+                fullrange: l.args.bool_("fullrange").unwrap_or(false),
+            },
             GeomSpec::Violin => StatSpec::Ydensity {
                 bw: None,
                 adjust: None,
@@ -239,7 +246,7 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
                     f.set("ymin", vec![0.0; f.n]);
                 }
             }
-            GeomSpec::Point { .. } | GeomSpec::Line | GeomSpec::Step | GeomSpec::Density | GeomSpec::Violin => {}
+            GeomSpec::Point { .. } | GeomSpec::Line | GeomSpec::Step | GeomSpec::Density | GeomSpec::Violin | GeomSpec::Smooth => {}
             GeomSpec::Errorbar | GeomSpec::Ribbon => {}
             GeomSpec::Freqpoly { .. } => {
                 // ggplot2 StatBin + geom_freqpoly: extend the line to y=0 one
