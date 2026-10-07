@@ -796,9 +796,13 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
 
     let train = |name: &str| -> Option<BuiltScale> {
         // aes -> frame column names to scan (boxplot emits ylower/…/outlier_y)
+        // ggplot2 range training scans every column mapped to the aesthetic
+        // (segment endpoints, ribbon/crossbar bounds, boxplot summaries…)
         let aux: &[&str] = match name {
-            "y" => &["ymin", "ymax", "ylower", "ymiddle", "yupper", "outlier_y"],
-            "x" => &["xmin", "xmax", "outlier_x", "x_lower"],
+            "y" => &[
+                "ymin", "ymax", "ylower", "ymiddle", "yupper", "outlier_y", "yend",
+            ],
+            "x" => &["xmin", "xmax", "outlier_x", "x_lower", "xend"],
             _ => &[],
         };
         let mut disc_levels: Vec<String> = Vec::new();
