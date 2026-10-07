@@ -189,6 +189,14 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
                 boundary: l.args.f64_("boundary"),
                 closed: l.args.s("closed").map(|s| s.to_string()),
             },
+            GeomSpec::Density => StatSpec::Density { bw: None, adjust: None, n: None, trim: false },
+            GeomSpec::Violin => StatSpec::Ydensity {
+                bw: None,
+                adjust: None,
+                n: None,
+                trim: l.args.bool_("trim").unwrap_or(false),
+                scale: l.args.s("scale").map(|s| s.to_string()),
+            },
             GeomSpec::Boxplot => StatSpec::Boxplot { coef: None },
             _ => StatSpec::Identity,
         });
@@ -231,7 +239,7 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
                     f.set("ymin", vec![0.0; f.n]);
                 }
             }
-            GeomSpec::Point { .. } | GeomSpec::Line | GeomSpec::Step => {}
+            GeomSpec::Point { .. } | GeomSpec::Line | GeomSpec::Step | GeomSpec::Density | GeomSpec::Violin => {}
             GeomSpec::Errorbar | GeomSpec::Ribbon => {}
             GeomSpec::Freqpoly { .. } => {
                 // ggplot2 StatBin + geom_freqpoly: extend the line to y=0 one

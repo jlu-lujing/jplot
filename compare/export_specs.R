@@ -65,7 +65,9 @@ layer <- function(geom, ..., stat = NULL, position = list(kind = "identity"), ma
     errorbarh = list(kind = "errorbarh"),
     abline = list(kind = "abline"),
     rect = list(kind = "rect"),
-    path = list(kind = "path")
+    path = list(kind = "path"),
+    density = list(kind = "density"),
+    violin = list(kind = "violin")
   )
   list(geom = g, stat = stat, position = position,
        mapping = if (is.null(mapping)) list(map = list()) else list(map = mapping),
@@ -327,6 +329,13 @@ for (f in gallery_specs) {
 
 
 ## 43–46: theme(...) element overrides ---------------------------------------
+## 47 density, 48 violin ------------------------------------------------------
+save("47_density", spec(df, list(x = "mpg"), list(layer("density"))))
+render("47_density", ggplot(df, aes(mpg)) + geom_density())
+
+save("48_violin", spec(df, list(x = "cyl", y = "mpg"), list(layer("violin"))))
+render("48_violin", ggplot(df, aes(cyl, mpg)) + geom_violin())
+
 save("43_thm_nogrid", spec(df, list(x = "mpg"), list(layer("histogram")),
      theme = list(kind = "custom", base = "grey", elements = list(panel.grid = NULL))))
 render("43_thm_nogrid", ggplot(df, aes(mpg)) + geom_histogram() + theme(panel.grid = element_blank()))

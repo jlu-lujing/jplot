@@ -374,6 +374,13 @@ fn auto_label_of(bp: &BuiltPlot, aes: &str) -> Option<String> {
         if count_stat {
             return Some("count".into());
         }
+        let dens_stat = bp.layers.iter().any(|l| {
+            use crate::spec::GeomSpec;
+            matches!(l.geom, GeomSpec::Density) && !l.aes.contains_key("y")
+        });
+        if dens_stat {
+            return Some("density".into());
+        }
     }
     let col = bp
         .layers

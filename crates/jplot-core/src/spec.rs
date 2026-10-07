@@ -87,6 +87,10 @@ pub enum GeomSpec {
     Jitter,
     /// geom_label: text with background box
     Label,
+    /// geom_density: KDE line
+    Density,
+    /// geom_violin: mirrored KDE polygon + median bar
+    Violin,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -116,6 +120,32 @@ pub enum StatSpec {
         /// "right" (default) | "left"
         #[serde(default, skip_serializing_if = "Option::is_none")]
         closed: Option<String>,
+    },
+    /// gaussian KDE over a 512-point grid (R stats::density semantics:
+    /// nrd0 bandwidth, ±3·bw grid unless trim)
+    Density {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bw: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        adjust: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        n: Option<usize>,
+        #[serde(default)]
+        trim: bool,
+    },
+    /// vertical KDE per discrete-x group (geom_violin's stat; output scaled
+    /// by density/max-density across groups = "area" scaling)
+    Ydensity {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bw: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        adjust: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        n: Option<usize>,
+        #[serde(default)]
+        trim: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scale: Option<String>,
     },
     /// boxplot summary: quantile(0.25), median, quantile(0.75), whiskers, outliers
     Boxplot {

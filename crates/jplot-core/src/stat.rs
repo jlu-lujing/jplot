@@ -21,6 +21,66 @@ pub fn quantile7(sorted: &[f64], p: f64) -> f64 {
     sorted[lo] + (h - lo as f64) * (sorted[hi] - sorted[lo])
 }
 
+// ---------------------------------------------------------------------------
+// Gaussian kernel density estimate (R stats::density, gaussian kernel).
+// nrd0 bandwidth (R MASS/bw.nrd0): 0.9·min(sd, IQR/1.34)·n^-1/4; grid =
+// ±3·bw beyond the data, 512 points, density = (1/n·bw)·Σφ((x−xᵢ)/bw).
+// ---------------------------------------------------------------------------
+
+pub fn bw_nrd0(x: &[f64]) -> f64 {
+    if x.len() < 2 {
+        return 1.0;
+    }
+    let n = x.len() as f64;
+    let mean = x.iter().sum::<f64>() / n;
+    let var = x.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n - 1.0);
+    let sd = var.sqrt();
+    let mut sx: Vec<f64> = x.to_vec();
+    sx.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let q1 = quantile_sorted(&sx, 0.25);
+    let q3 = quantile_sorted(&sx, 0.75);
+    let lo = sd.min((q3 - q1) / 1.34).max(sd.min(f64::EPSILON).max(sd));
+    let lo = if lo <= 0.0 || !lo.is_finite() { sd.max(1.0) } else { lo };
+    0.9 * lo * n.powf(-0.2)
+}
+
+fn quantile_sorted(sorted: &[f64], p: f64) -> f64 {
+    let n = sorted.len();
+    if n == 1 {
+        return sorted[0];
+    }
+    let h = (n as f64 - 1.0) * p;
+    let lo = h.floor() as usize;
+    let hi = (lo + 1).min(n - 1);
+    sorted[lo] + (h - lo as f64) * (sorted[hi] - sorted[lo])
+}
+
+/// R density(): returns (x_grid, density) of length n.
+pub fn gaussian_density(x: &[f64], bw: f64, n: usize, trim: bool) -> (Vec<f64>, Vec<f64>) {
+    let (dmin, dmax) = x
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &v| {
+            (a.min(v), b.max(v))
+        });
+    let (from, to) = if trim { (dmin, dmax) } else { (dmin - 3.0 * bw, dmax + 3.0 * bw) };
+    let n = n.max(2);
+    let xs: Vec<f64> = (0..n).map(|i| from + (to - from) * i as f64 / (n - 1) as f64).collect();
+    let norm = 1.0 / (x.len() as f64 * bw * (2.0 * std::f64::consts::PI).sqrt());
+    let ys: Vec<f64> = xs
+        .iter()
+        .map(|&xg| {
+            x.iter()
+                .map(|&xi| {
+                    let u = (xg - xi) / bw;
+                    (-0.5 * u * u).exp()
+                })
+                .sum::<f64>()
+                * norm
+        })
+        .collect();
+    (xs, ys)
+}
+
 #[allow(dead_code)] // bin_breaks_width path (R bin.R) kept for binwidth parity work
 /// fullseq: `seq(floor(min/size)*size, ceil(max/size)*size, size)`
 fn fullseq(min: f64, max: f64, size: f64) -> Vec<f64> {
@@ -185,6 +245,96 @@ pub fn compute_stat(f: &Frame, spec: &StatSpec) -> Frame {
             if f.cat.contains_key("colour") {
                 out.set_cat("colour", f.cat["colour"].iter().take(centres.len()).cloned().collect());
             }
+            out
+        }
+        StatSpec::Density { bw, adjust, n, trim: _trim } => {
+            let xs = f.get("x").cloned().unwrap_or_default();
+            let x: Vec<f64> = xs.into_iter().filter(|v| v.is_finite()).collect();
+            if x.len() < 2 {
+                return Frame::new();
+            }
+            let mut b = bw.unwrap_or_else(|| bw_nrd0(&x));
+            b *= adjust.unwrap_or(1.0);
+            if b <= 0.0 || !b.is_finite() {
+                b = 1.0;
+            }
+            // ggplot2 4.0.3 layer_data: the 512-pt grid spans the DATA range
+            // (min..max); the ±3·bw padding lives inside the estimate, not the
+            // output grid. R's `trim` additionally drops nothing (same range).
+            let (gx, gy) = gaussian_density(&x, b, n.unwrap_or(512), true);
+            let mut out = Frame::new();
+            out.set("x", gx);
+            out.set("y", gy);
+            out
+        }
+        StatSpec::Ydensity { bw, adjust, n, trim: _trim, scale } => {
+            let xs = f.get("x").cloned().unwrap_or_default();
+            let ys = f.get("y").cloned().unwrap_or_default();
+            let mut out = Frame::new();
+            // group by discrete x values (1-based ordinal already mapped)
+            let mut uniq: Vec<f64> = xs.iter().cloned().filter(|v| v.is_finite()).collect();
+            uniq.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            uniq.dedup();
+            let mut per_group: Vec<(f64, Vec<f64>, Vec<f64>, usize)> = Vec::new();
+            for &ux in &uniq {
+                let vals: Vec<f64> = (0..xs.len())
+                    .filter(|&i| (xs[i] - ux).abs() < 1e-9 && ys[i].is_finite())
+                    .map(|i| ys[i])
+                    .collect();
+                if vals.len() < 2 {
+                    continue;
+                }
+                let mut b = bw.unwrap_or_else(|| bw_nrd0(&vals));
+                b *= adjust.unwrap_or(1.0);
+                if b <= 0.0 || !b.is_finite() {
+                    b = 1.0;
+                }
+                let (gx, gy) = gaussian_density(&vals, b, n.unwrap_or(512), true);
+                // keep only points within the group's data range (shell clipped
+                // to min..max, matching ggplot2 4.x geom_violin output)
+                let (vmin, vmax) = vals.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |a, &v| (a.0.min(v), a.1.max(v)));
+                let gx2: Vec<f64> = gx.iter().cloned().filter(|y| *y >= vmin && *y <= vmax).collect();
+                let gy2: Vec<f64> = gx
+                    .iter()
+                    .zip(gy.iter())
+                    .filter(|(y, _)| **y >= vmin && **y <= vmax)
+                    .map(|(_, d)| *d)
+                    .collect();
+                per_group.push((ux, gx2, gy2, vals.len()));
+            }
+            // "area" (default): violinwidth = density / global max density;
+            // "count": also × n/max(n); "width": per-group scaled to 1.
+            let gmax = per_group
+                .iter()
+                .flat_map(|(_, _, gy, _)| gy.iter().cloned())
+                .fold(0.0f64, f64::max);
+            let nmax = per_group.iter().map(|(_, _, _, nn)| *nn).max().unwrap_or(1) as f64;
+            let mode = scale.as_deref().unwrap_or("area");
+            let mut xo: Vec<f64> = Vec::new();
+            let mut yo: Vec<f64> = Vec::new();
+            let mut vw: Vec<f64> = Vec::new();
+            let mut gn: Vec<f64> = Vec::new();
+            let mut wid: Vec<f64> = Vec::new();
+            for (ux, gx, gy, nn) in &per_group {
+                let nnf = *nn as f64;
+                for (j, &yv) in gy.iter().enumerate() {
+                    xo.push(*ux);
+                    yo.push(gx[j]);
+                    let w = match mode {
+                        "count" => yv / gmax * (nnf / nmax),
+                        "width" => yv / gy.iter().cloned().fold(0.0f64, f64::max),
+                        _ => yv / gmax,
+                    };
+                    vw.push(w);
+                    gn.push(nnf);
+                    wid.push(0.9);
+                }
+            }
+            out.set("x", xo);
+            out.set("y", yo);
+            out.set("violinwidth", vw);
+            out.set("n", gn);
+            out.set("width", wid);
             out
         }
         StatSpec::Boxplot { coef } => {

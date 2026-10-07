@@ -178,9 +178,15 @@ pub fn format_breaks(xs: &[f64]) -> Vec<String> {
         return xs.iter().map(|x| format_break(*x)).collect();
     }
     // common decimals: the max needed across the set (label_number rule)
-    let mut dec = 0usize;
+    let mut dec = 4usize;
     for prec in 0..=4usize {
-        if xs.iter().all(|x| format!("{x:.prec$}").parse::<f64>() == Ok(*x)) {
+        // relative tolerance: extended_breaks accumulates float dust
+        // (0.02+0.02+0.02 = 0.060000000000000005); R formats the *nominal*
+        // tick values, so an exact round-trip must not be required.
+        if xs
+            .iter()
+            .all(|x| format!("{x:.prec$}").parse::<f64>().is_ok_and(|r| (r - x).abs() <= x.abs() * 1e-9 + 1e-12))
+        {
             dec = prec;
             break;
         }

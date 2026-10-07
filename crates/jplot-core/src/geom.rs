@@ -37,6 +37,49 @@ pub fn draw_layer(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &B
         GeomSpec::Abline => draw_abline(ops, l, bp, vp),
         GeomSpec::Jitter => draw_points(ops, l, bp, vp),
         GeomSpec::Label => draw_label(ops, l, bp, vp),
+        GeomSpec::Density => draw_lines(ops, l, bp, vp),
+        GeomSpec::Violin => draw_violin(ops, l, bp, vp),
+    }
+}
+
+/// geom_violin (stat ydensity): mirrored polygon x ± width/2·violinwidth at
+/// y, plus the median bar (colour #333, linewidth 0.5·fatten? ggplot2 draws
+/// the median as a thick bar by default).
+fn draw_violin(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
+    let g = &l.frame;
+    let xs = g.get("x").cloned().unwrap_or_default();
+    let ys = g.get("y").cloned().unwrap_or_default();
+    let vw = g.get("violinwidth").cloned().unwrap_or_default();
+    let wv = g.get("width").cloned().unwrap_or_default();
+    let n = xs.len().min(ys.len()).min(vw.len());
+    // group by x value (each violin is one x group; x constant per group)
+    let mut groups: Vec<(f64, Vec<(f64, f64)>)> = Vec::new(); // (x, [(y, half-width data-units)])
+    for i in 0..n {
+        if !(xs[i].is_finite() && ys[i].is_finite() && vw[i].is_finite()) {
+            continue;
+        }
+        let w = wv.get(i).copied().unwrap_or(0.9);
+        let half = w / 2.0 * vw[i];
+        match groups.iter_mut().find(|(gx, _)| (*gx - xs[i]).abs() < 1e-9) {
+            Some((_, pts)) => pts.push((ys[i], half)),
+            None => groups.push((xs[i], vec![(ys[i], half)])),
+        }
+    }
+    for (gx, pts) in groups {
+        if pts.len() < 2 {
+            continue;
+        }
+        let fillc = l.args.colour_(&["fill"]).unwrap_or(Color::white());
+        let stroke = line_style_of(l, 0, bp, geom_lw(l.args.f64_("linewidth").unwrap_or(0.5)));
+        // right side ascending, left side descending (ggplot2 GeomPolygon order)
+        let mut poly: Vec<(f64, f64)> = pts
+            .iter()
+            .map(|(y, hw)| (vp.map_x(&bp.x_scale, gx + hw), vp.map_y(&bp.y_scale, *y)))
+            .collect();
+        poly.extend(pts.iter().rev().map(|(y, hw)| (vp.map_x(&bp.x_scale, gx - hw), vp.map_y(&bp.y_scale, *y))));
+        poly.push(poly[0]);
+        ops.push(Primitive::Polyline { points: poly, stroke: Some(stroke), fill: Some(Paint::new(fillc)), closed: true });
+        // (ggplot2 4.x geom_violin draws no median bar by default)
     }
 }
 
