@@ -344,9 +344,57 @@ pub fn default_break_count() -> usize {
 // Break labels (scales::label_number style)
 // ---------------------------------------------------------------------------
 
-/// Format a break value like ggplot2 default labels: drop trailing zeros,
-/// no big marks; switch to scientific for |x| >= 1e6 or non-zero |x| < 1e-4
-/// (scales cut_short_scale analogue, simplified).
+/// Format break labels like ggplot2's scales::label_number(): the whole break
+/// set shares a common number of decimal places (e.g. {5, 7.5, 10} ->
+/// "5.0","7.5","10.0"), space thousands separator ("1 000"), and scientific
+/// notation only for |x| >= 1e6 or non-zero |x| < 1e-4.
+pub fn format_breaks(xs: &[f64]) -> Vec<String> {
+    if xs.iter().any(|x| !x.is_finite()) {
+        return xs.iter().map(|x| x.to_string()).collect();
+    }
+    // big-mark: ggplot2/scales default uses a thin space ("1 000")
+    if xs.iter().any(|x| x.abs() >= 1e6 || (x != &0.0 && x.abs() < 1e-4)) {
+        return xs.iter().map(|x| format_break(*x)).collect();
+    }
+    // common decimals: the max needed across the set (label_number rule)
+    let mut dec = 0usize;
+    for prec in 0..=4usize {
+        if xs.iter().all(|x| format!("{x:.prec$}").parse::<f64>() == Ok(*x)) {
+            dec = prec;
+            break;
+        }
+    }
+    let sep = |s: &str| {
+        // insert a space every 3 digits left of the decimal point
+        let (int, frac) = match s.split_once('.') {
+            Some(p) => (p.0.to_string(), Some(p.1)),
+            None => (s.to_string(), None),
+        };
+        let neg = int.starts_with('-');
+        let digits = int.trim_start_matches('-');
+        let mut out = String::new();
+        let ds: Vec<char> = digits.chars().collect();
+        for (i, c) in ds.iter().enumerate() {
+            if i > 0 && (ds.len() - i) % 3 == 0 {
+                out.push(' ');
+            }
+            out.push(*c);
+        }
+        let body = match frac {
+            Some(f) => format!("{out}.{f}"),
+            None => out,
+        };
+        if neg {
+            format!("-{body}")
+        } else {
+            body
+        }
+    };
+    xs.iter().map(|x| sep(&format!("{x:.dec$}"))).collect()
+}
+
+/// Format a single break value (scientific/edge cases kept for callers that
+/// need per-value formatting).
 pub fn format_break(x: f64) -> String {
     if !x.is_finite() {
         return x.to_string();
@@ -496,7 +544,7 @@ impl ContinuousScale {
         // clipped to range (probes: dodge y limits 0..12 → breaks on
         // -0.6..12.6 → 0,2.5,…,12.5).
         let breaks = breaks.unwrap_or_else(|| extended_breaks(range.min, range.max, 5));
-        let labels = labels.unwrap_or_else(|| breaks.iter().map(|b| format_break(*b)).collect());
+        let labels = labels.unwrap_or_else(|| format_breaks(&breaks));
         ContinuousScale {
             limits,
             range,
@@ -689,7 +737,9 @@ mod tests {
         assert_eq!(s.breaks, vec![0.0, 2.5, 5.0, 7.5, 10.0]);
         assert!((s.range.min + 0.5).abs() < 1e-9);
         assert!((s.range.max - 10.5).abs() < 1e-9);
-        assert_eq!(s.labels, vec!["0", "2.5", "5", "7.5", "10"]);
+        // scales::label_number keeps common decimals across the break set
+        // (R verified: label_number(c(0,2.5,5,7.5,10)) -> "0.0".."10.0")
+        assert_eq!(s.labels, vec!["0.0", "2.5", "5.0", "7.5", "10.0"]);
     }
 
     #[test]

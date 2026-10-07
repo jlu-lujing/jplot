@@ -116,19 +116,44 @@ impl Theme {
 
 /// Default geom constants from ggplot2 source (refs/ggplot2/R/geom-*.R).
 pub mod geom_defaults {
-    /// ggplot2 linewidth/size unit is MILLIMETRES; cairo @72dpi draws
-    /// pt=1px and 1mm = 72.27/25.4 pt (ggplot2's internal .pt constant).
+    /// svglite (the reference device, 72dpi/base11) maps a *nominal* linewidth
+    /// of 0.5mm to these stroke-width values depending on the element kind.
+    /// Both the reference and jplot PNGs are rasterised by the SAME resvg, so
+    /// emitting the identical stroke number reproduces the identical pixels.
+    const GEOM_LW_PX_PER_MM: f64 = 1.07 / 0.5; // line/box/bar borders (2.14)
+    const THEME_LW_PX_PER_MM: f64 = 0.53 / 0.5; // grid + axis ticks (1.06)
+    const POINT_STROKE_PX_PER_MM: f64 = 0.71 / 0.5; // point/outlier stroke
+
+    /// ggplot2 linewidth/size unit is MILLIMETRES; svglite device mapping.
     pub fn mm_to_px(v_mm: f64) -> f64 {
         v_mm * 72.27 / 25.4
+    }
+    /// stroke-width for a geom-level linewidth (geom_line/path/box/bar/rect).
+    pub fn geom_lw(v_mm: f64) -> f64 {
+        v_mm * GEOM_LW_PX_PER_MM
+    }
+    /// stroke-width for theme lines: panel.grid.major + axis.ticks.
+    pub fn theme_lw(v_mm: f64) -> f64 {
+        v_mm * THEME_LW_PX_PER_MM
+    }
+    /// stroke-width for point / outlier circle outlines (ggplot2 `stroke`).
+    pub fn point_stroke(v_mm: f64) -> f64 {
+        v_mm * POINT_STROKE_PX_PER_MM
     }
     /// .pt <- 72.27 / 25.4 ; .stroke <- 96 / 25.4
     pub const PT_PER_MM: f64 = 72.27 / 25.4;
     pub const STROKE_RATIO: f64 = (96.0 / 25.4) / PT_PER_MM; // 96/72.27
-    /// ggplot2 point `size` is in MILLIMETRES: 1.5mm at 72dpi device
-    /// (R cairo uses 72.27pt/inch; grid points size = pointsize/72 inch)
-    /// → diameter_px = size_mm/25.4 * 72 ≈ 4.25px for the default 1.5.
+    /// ggplot2 point `size` is MILLIMETRES; svglite r for size=1.5mm is 1.95px.
+    pub fn point_r_px(size_mm: f64) -> f64 {
+        size_mm * 1.3
+    }
+    /// default point size (mm) = pointsize rel(1.5) of base 11 → 1.5mm.
+    pub fn default_size_mm(base_size: f64) -> f64 {
+        (base_size / 11.0) * 1.5
+    }
+    /// legacy helper (px, kept for compatibility): diameter.
     pub fn point_size_px(base_size: f64) -> f64 {
-        ((base_size / 11.0) * 1.5) / 25.4 * 72.0
+        point_r_px(default_size_mm(base_size)) * 2.0
     }
     /// border width = base_line_size = base/22 pt → px
     pub fn border_width_px(base_size: f64) -> f64 {

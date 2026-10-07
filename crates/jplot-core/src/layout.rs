@@ -10,7 +10,7 @@ use crate::scene::{layer, Line, Paint, Primitive, Scene, TextAlign, TextStyle};
 use crate::scale::Color;
 use crate::text::{left_edge, measure};
 use crate::theme::{geom_defaults, Theme};
-use crate::theme::geom_defaults::mm_to_px;
+use crate::theme::geom_defaults::{geom_lw, point_r_px, point_stroke, theme_lw};
 
 pub struct Viewport {
     pub x0: f64,
@@ -50,7 +50,7 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
         color: Color::rgb(77, 77, 77), // col_mix(ink, paper, 0.302)
         ..Default::default()
     };
-    let tick_line = Line::solid(Color::rgb(51, 51, 51), mm_to_px(0.5)); // #333
+    let tick_line = Line::solid(Color::rgb(51, 51, 51), theme_lw(0.5)); // #333
     let x_lab = spec.labels.x.clone().or_else(|| auto_label_of(bp, "x")).unwrap_or_default();
     let y_lab = spec.labels.y.clone().or_else(|| auto_label_of(bp, "y")).unwrap_or_default();
 
@@ -67,7 +67,7 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
         w + 4.85
     };
     if !y_lab.is_empty() {
-        left += 13.74;
+        left += 13.06; // svglite gtable ylab-l column (probe 07_line)
     }
     left += 5.48;
     // svglite: panel bottom = 448.5 → 31.5 gutter with x-axis title
@@ -136,7 +136,7 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
         } else {
             Color::rgb(229, 229, 229)
         };
-        let gl = Line::solid(gc, mm_to_px(0.5));
+        let gl = Line::solid(gc, theme_lw(0.5));
         for &b in &x_breaks {
             let x = vp.map_x(&bp.x_scale, b);
             if x > vp.x0 && x < vp.x1 {
@@ -157,7 +157,7 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
             w: vp.x1 - vp.x0,
             h: vp.y1 - vp.y0,
             fill: None,
-            stroke: Some(Line::solid(Color::black(), mm_to_px(0.5))),
+            stroke: Some(Line::solid(Color::black(), geom_lw(0.5))),
         });
     }
 
@@ -353,27 +353,27 @@ fn gradient_color(v: f64, all: &[f64], alpha: f64) -> Color {
 }
 
 fn draw_points(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
-    let size_px = l.args.f64_("size").unwrap_or(geom_defaults::point_size_px(11.0));
+    let r = l.args.f64_("size").map(point_r_px).unwrap_or(geom_defaults::point_size_px(11.0) * 0.5);
     let (xs, ys) = (l.frame.get("x").cloned().unwrap_or_default(), l.frame.get("y").cloned().unwrap_or_default());
-    let r = size_px * 0.5;
     for i in 0..xs.len().min(ys.len()) {
         if !xs[i].is_finite() || !ys[i].is_finite() {
             continue;
         }
         let c = point_colour_of(l, i, bp);
-        // ggplot2 default shape 19: solid, colour-filled, no border
+        // ggplot2 default shape 19: solid filled; svglite still emits a
+        // same-colour stroke (stroke-width 0.71 for the default stroke 0.5).
         ops.push(Primitive::Circle {
             cx: vp.map_x(&bp.x_scale, xs[i]),
             cy: vp.map_y(&bp.y_scale, ys[i]),
             r,
             fill: Some(Paint::new(c)),
-            stroke: None,
+            stroke: Some(Line::solid(c, point_stroke(0.5))),
         });
     }
 }
 
 fn draw_lines(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
-    let width_px = l.args.f64_("linewidth").unwrap_or(mm_to_px(0.5));
+    let width_px = l.args.f64_("linewidth").unwrap_or(geom_lw(0.5));
     let (xs, ys) = (l.frame.get("x").cloned().unwrap_or_default(), l.frame.get("y").cloned().unwrap_or_default());
     let n_groups = l.group_ids.iter().cloned().max().map_or(0, |m| m + 1);
     for g in 0..n_groups.max(1) {
@@ -431,7 +431,7 @@ fn draw_bars(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltP
             h: (yb - ya).abs(),
             fill: Some(Paint::new(c)),
             stroke: if has_outline {
-                Some(Line::solid(point_colour_of(l, i, bp), mm_to_px(0.5)))
+                Some(Line::solid(point_colour_of(l, i, bp), point_stroke(0.5)))
             } else {
                 None
             },
@@ -454,7 +454,7 @@ fn draw_boxplot(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &Bui
     //   staplewidth = 0 → NO whisker caps drawn
     //   notch = FALSE, notchwidth = 0.5 ; varwidth handled in build()
     let base_colour = Color::rgb(51, 51, 51);
-    let lw = a.f64_("linewidth").unwrap_or(mm_to_px(0.5));
+    let lw = a.f64_("linewidth").unwrap_or(geom_lw(0.5));
     let box_colour = a.colour_(&["box.colour", "box.color"]).unwrap_or(base_colour);
     let box_lw = a.f64_("box.linewidth").unwrap_or(lw);
     let whisker_colour = a.colour_(&["whisker.colour", "whisker.color"]).unwrap_or(base_colour);
@@ -524,9 +524,8 @@ fn draw_boxplot(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &Bui
     // outliers (only if not dropped via outliers=FALSE)
     if let (Some(ox), Some(oy)) = (g.get("outlier_x"), g.get("outlier_y")) {
         let shape = a.f64_("outlier.shape").unwrap_or(19.0);
-        let size_px = a.f64_("outlier.size").map(|s| s / 25.4 * 72.0).unwrap_or(geom_defaults::point_size_px(11.0));
-        let r = size_px * 0.5;
-        let stroke_w = a.f64_("outlier.stroke").unwrap_or(mm_to_px(0.5));
+        let r = a.f64_("outlier.size").map(point_r_px).unwrap_or(geom_defaults::point_size_px(11.0) * 0.5);
+        let stroke_w = a.f64_("outlier.stroke").unwrap_or(point_stroke(0.5));
         let o_colour = a.colour_(&["outlier.colour", "outlier.color"]).unwrap_or(base_colour);
         let o_fill = a.colour_(&["outlier.fill"]);
         let alpha = a.f64_("outlier.alpha");
@@ -540,13 +539,13 @@ fn draw_boxplot(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &Bui
                     let solid = shape as i32 == 17;
                     ops.push(Primitive::Polyline {
                         points: pts,
-                        stroke: Some(Line::solid(o_colour, if solid { stroke_w } else { mm_to_px(0.5) })),
+                        stroke: Some(Line::solid(o_colour, if solid { stroke_w } else { point_stroke(0.5) })),
                         fill: if solid { Some(Paint::new(o_fill.unwrap_or(o_colour))) } else { o_fill.map(Paint::new) },
                         closed: true,
                     });
                 }
                 21 => ops.push(Primitive::Circle { cx, cy, r, fill: Some(Paint::new(o_fill.unwrap_or(Color::white()))), stroke: Some(Line::solid(o_colour, stroke_w)) }),
-                0 | 1 => ops.push(Primitive::Circle { cx, cy, r, fill: o_fill.map(Paint::new), stroke: Some(Line::solid(o_colour, mm_to_px(0.5))) }),
+                0 | 1 => ops.push(Primitive::Circle { cx, cy, r, fill: o_fill.map(Paint::new), stroke: Some(Line::solid(o_colour, point_stroke(0.5))) }),
                 _ => ops.push(Primitive::Circle { cx, cy, r, fill: Some(Paint::new(o_colour)), stroke: None }),
             }
         }
