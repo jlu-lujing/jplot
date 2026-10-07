@@ -292,6 +292,16 @@ pub enum ScaleSpec {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         n_breaks: Option<usize>,
     },
+    /// ggplot2 scale_*_brewer / scale_*_viridis_d / scale_*_grey: named
+    /// palette ("brewer:Set1", "viridis", "magma", …). `opts` = [start, end]
+    /// for grey (default .2, .8 like scale_fill_grey).
+    Discrete {
+        palette: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        opts: Vec<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
     /// Manual discrete scale: named levels -> values (colours etc.).
     DiscreteManual {
         values: Vec<String>,
@@ -611,6 +621,28 @@ impl DiscreteColourScale {
         palette: Option<&Vec<Color>>,
         ramp: &[String],
     ) -> Self {
+        // named palette from the scale spec beats the theme palette
+        if let ScaleSpec::Discrete { palette: pname, opts, name } = spec {
+            let cols: Vec<Color> = if pname == "grey" {
+                // ggplot2 4.x scale_fill_grey defaults (probe 53): grey(.2)
+                // first (dark = #333333), grey(.8) second (#CCCCCC)
+                let (st, en) = (opts.first().copied().unwrap_or(0.2), opts.get(1).copied().unwrap_or(0.8));
+                crate::color::grey_range(levels.len(), st, en)
+            } else {
+                crate::color::named_palette(pname, levels.len())
+                    .map(|cs| cs.iter().filter_map(|c| Color::parse(&format!("#{c}"))).collect())
+                    .unwrap_or_else(|| hue_palette(levels.len()))
+            };
+            return DiscreteColourScale {
+                levels,
+                colours: cols,
+                name: name.clone(),
+                data_lo: 0.0,
+                data_hi: 1.0,
+                ramp: vec![],
+            };
+        }
+
         let default_pal = palette.map_or_else(|| hue_palette(levels.len()), |p| p.clone());
         let colours = match spec {
             ScaleSpec::DiscreteManual { values, .. } => {

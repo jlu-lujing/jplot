@@ -3,6 +3,7 @@ pub mod breaks;
 pub mod build;
 pub mod color;
 pub mod data;
+pub mod palettes;
 pub mod error;
 pub mod geom;
 pub mod guides;

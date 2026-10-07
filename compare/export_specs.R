@@ -331,6 +331,19 @@ for (f in gallery_specs) {
 ## 43–46: theme(...) element overrides ---------------------------------------
 ## 47 density, 48 violin ------------------------------------------------------
 ## 49 scatter flipped, 50 boxplot flipped ------------------------------------
+## 51–53: named discrete palettes ---------------------------------------------
+save("51_brewer", spec(df, list(x = "disp", y = "mpg", colour = "cyl"), list(layer("point")),
+     scales = list(colour = list(kind = "discrete", palette = "brewer:Set1"))))
+render("51_brewer", ggplot(df, aes(disp, mpg, colour = cyl)) + geom_point() + scale_colour_brewer(palette = "Set1"))
+
+save("52_viridis", spec(df, list(x = "disp", y = "mpg", colour = "cyl"), list(layer("point")),
+     scales = list(colour = list(kind = "discrete", palette = "viridis"))))
+render("52_viridis", ggplot(df, aes(disp, mpg, colour = cyl)) + geom_point() + scale_colour_viridis_d())
+
+save("53_greypal", spec(df, list(x = "cyl", fill = "am"), list(layer("bar", position = list(kind = "dodge", width = 0.9))),
+     scales = list(fill = list(kind = "discrete", palette = "grey"))))
+render("53_greypal", ggplot(df, aes(cyl, fill = am)) + geom_bar(position = "dodge") + scale_fill_grey())
+
 save("49_flip_scatter", spec(df, list(x = "disp", y = "mpg"), list(layer("point")),
      theme = list(kind = "grey")) |> append(list(coord = "flip")))
 render("49_flip_scatter", ggplot(df, aes(disp, mpg)) + geom_point() + coord_flip())

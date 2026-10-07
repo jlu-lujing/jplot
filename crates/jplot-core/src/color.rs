@@ -238,22 +238,63 @@ pub fn hue_palette(n: usize) -> Vec<Color> {
 
 /// scales::grey_pal — grey(n) equivalent: equally spaced greys, darkest first.
 pub fn grey_palette(n: usize) -> Vec<Color> {
+    grey_range(n, 0.2, 0.8)
+}
+
+/// grey palette math (scales::grey_pal): `grey(seq(start, end, length = n))`
+/// where grey(v) = rgb(v,v,v) — v is the LIGHTNESS, not its complement.
+/// ggplot2 scale_fill_grey defaults start = .7, end = .2 (dark = first level).
+pub fn grey_range(n: usize, start: f64, end: f64) -> Vec<Color> {
     if n == 0 {
-        return Vec::new();
+        return vec![];
     }
     (0..n)
         .map(|i| {
-            // grey(seq(...)) darkest .2 to lightest .9 for n>1; n=1 -> .5? R: grey(0.5)
             let v = if n == 1 {
-                0.5
+                (start + end) / 2.0
             } else {
-                0.2 + 0.7 * (i as f64) / (n as f64 - 1.0)
+                start + (end - start) * i as f64 / (n as f64 - 1.0)
             };
-            let byte = ((1.0f64 - v) * 255.0f64).round() as u8; // grey(x) = black of intensity 1-x
+            let byte = (v * 255.0).round() as u8; // grey(v) = rgb(v,v,v)
             Color::rgb(byte, byte, byte)
         })
         .collect()
 }
+
+/// Named discrete palettes (RColorBrewer / viridisLite, generated tables).
+/// `n>8` recycles the 8-colour row (R warns identically); brewer names may
+/// carry a `brewer:` prefix. Returns uppercase hex strings.
+pub fn named_palette(name: &str, n: usize) -> Option<Vec<String>> {
+    let (kind, rest) = match name.split_once(':') {
+        Some(("brewer", nm)) => ("brewer", nm),
+        Some(("viridis", nm)) => ("viridis", nm),
+        other => ("viridis", match other {
+            Some((_, v)) => {
+                let _ = v;
+                name
+            }
+            None => name,
+        }),
+    };
+    // plain viridis family names also accepted bare
+    let bare = matches!(name, "viridis" | "magma" | "plasma" | "inferno" | "cividis");
+    let (kind, rest) = if bare { ("viridis", name) } else { (kind, rest) };
+    let table: &[(&str, &[(u32, [&str; 8])])] = match kind {
+        "brewer" => &crate::palettes::BREWER,
+        "viridis" => &crate::palettes::VIRIDIS,
+        _ => return None,
+    };
+    let entry = table.iter().find(|(nm, _)| nm.eq_ignore_ascii_case(rest))?;
+    let n = n.max(1);
+    let row = entry
+        .1
+        .iter()
+        .find(|(k, _)| *k == n as u32)
+        .or_else(|| entry.1.iter().find(|(k, _)| *k == 8))
+        .map(|(_, r)| r)?;
+    Some((0..n).map(|i| row[i % row.len().min(8)].to_string()).collect())
+}
+
 
 // ---------------------------------------------------------------------------
 // Breaks: Wilkinson extended, ported from labeling 0.4.3 (MIT)
