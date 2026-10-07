@@ -68,7 +68,7 @@ struct Guide {
     levels: Vec<String>,
     glyphs: Vec<KeyGlyph>,
     /// continuous colour bar: (data_lo, data_hi, ramp low, ramp high)
-    bar: Option<(f64, f64, String, String)>,
+    bar: Option<(f64, f64, Vec<String>)>,
     /// bar guide: normalised tick positions (t of each level label)
     bar_ticks: Vec<f64>,
 }
@@ -112,13 +112,12 @@ fn build_guides(bp: &BuiltPlot, ls: &TextStyle) -> Vec<Guide> {
                     .filter(|b| *b >= lo && *b <= hi)
                     .collect::<Vec<_>>();
                 let levels = crate::scale::format_breaks(&brk);
-                let (a, b) = cs.ramp_hex();
-                let (a, b) = (a.to_string(), b.to_string());
                 guides.push(Guide {
                     title: title_of(aes, cs.name.as_ref()),
                     levels,
                     glyphs: vec![],
-                    bar: Some((lo, hi, a, b)), bar_ticks: brk.iter().map(|b| (b - lo) / (hi - lo)).collect(),
+                    bar: Some((lo, hi, cs.ramp.clone())),
+                    bar_ticks: brk.iter().map(|b| (b - lo) / (hi - lo)).collect(),
                 });
                 continue;
             }
@@ -195,7 +194,7 @@ fn build_guides(bp: &BuiltPlot, ls: &TextStyle) -> Vec<Guide> {
 
 pub fn layout(bp: &BuiltPlot) -> Scene {
     let spec = &bp.plot;
-    let theme = Theme::new(crate::theme::ThemeKind::Grey);
+    let theme = Theme::new(spec.theme.kind());
     let width = spec.width;
     let height = spec.height;
     let hl = theme.half_line(); // 5.5
@@ -206,7 +205,7 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
     let (y_breaks, y_labels) = axis_breaks(&bp.y_scale);
     let label_style = TextStyle {
         size: theme.small_text(),
-        color: Color::rgb(77, 77, 77), // col_mix(ink, paper, 0.302)
+        color: theme.axis_text,
         ..Default::default()
     };
     let tick_line = Line::solid(Color::rgb(51, 51, 51), theme_lw(0.5)); // #333
@@ -285,19 +284,16 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
 
     // --- grid ---------------------------------------------------------------
     if theme.panel_grid_major {
-        let gc = if matches!(theme.kind, crate::theme::ThemeKind::Grey) {
-            Color::white()
-        } else {
-            Color::rgb(229, 229, 229)
-        };
-        let gl = Line::solid(gc, theme_lw(0.5));
+        let gl = Line::solid(theme.panel_grid, theme_lw(0.5));
         for &b in &x_breaks {
+            if !theme.grid_x { continue; }
             let x = vp.map_x(&bp.x_scale, b);
             if x > vp.x0 && x < vp.x1 {
                 sc.layer(layer::GRID).push(Primitive::Segment { x1: x, y1: vp.y0, x2: x, y2: vp.y1, stroke: gl.clone() });
             }
         }
         for &b in &y_breaks {
+            if !theme.grid_y { continue; }
             let y = vp.map_y(&bp.y_scale, b);
             if y > vp.y0 && y < vp.y1 {
                 sc.layer(layer::GRID).push(Primitive::Segment { x1: vp.x0, y1: y, x2: vp.x1, y2: y, stroke: gl.clone() });
@@ -908,15 +904,14 @@ fn point_colour_of(l: &crate::build::BuiltLayer, i: usize, bp: &BuiltPlot) -> Co
             }
             if let Some(vals) = l.frame.get("colour") {
                 if i < vals.len() {
-                    // continuous colour ramp from the scale (gradient default;
-                    // manual colours/limits override)
-                    let (a, b) = cs.ramp_hex();
+                    // continuous colour ramp from the scale (multi-stop viridis
+                    // under house theme; manual colours/limits override)
                     let t = if cs.data_hi == cs.data_lo {
                         0.5
                     } else {
                         ((vals[i] - cs.data_lo) / (cs.data_hi - cs.data_lo)).clamp(0.0, 1.0)
                     };
-                    return crate::scale::lab_ramp(a, b, t).with_alpha(alpha);
+                    return cs.ramp_color(t).with_alpha(alpha);
                 }
             }
         }
@@ -1281,7 +1276,8 @@ fn draw_legends(sc: &mut Scene, guides: &[Guide], theme: &Theme, width: f64, vp:
             y: title_bl,
             style: ts.clone(),
         });
-        if let Some((lo, hi, a, b)) = &g.bar {
+        if let Some((lo, hi, stops)) = &g.bar {
+            let _ = (lo, hi);
             let bar_top = title_bl + 6.64;
             let bar_h = 79.2;
             let bar_w = 16.0;
@@ -1290,7 +1286,7 @@ fn draw_legends(sc: &mut Scene, guides: &[Guide], theme: &Theme, width: f64, vp:
                 let t = (k as f64 + 0.5) / slices as f64; // 0 bottom .. 1 top
                 let y = bar_top + bar_h * (1.0 - (k as f64 + 1.0) / slices as f64);
                 let hh = bar_h / slices as f64 + 0.05;
-                let col = crate::scale::lab_ramp(&a, &b, t);
+                let col = crate::scale::multi_ramp(stops, t);
                 sc.layer(layer::LEGEND).push(Primitive::Rect {
                     x: key_cx - bar_w / 2.0,
                     y,

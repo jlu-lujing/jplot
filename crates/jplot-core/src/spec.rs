@@ -301,11 +301,26 @@ pub enum ThemeSpec {
     Bw,
     Minimal,
     Classic,
+    /// jplot house style (default for new plots)
+    Jplot,
+}
+
+impl ThemeSpec {
+    pub fn kind(&self) -> crate::theme::ThemeKind {
+        use crate::theme::ThemeKind::*;
+        match self {
+            ThemeSpec::Grey => Grey,
+            ThemeSpec::Bw => Bw,
+            ThemeSpec::Minimal => Minimal,
+            ThemeSpec::Classic => Classic,
+            ThemeSpec::Jplot => Jplot,
+        }
+    }
 }
 
 impl Default for ThemeSpec {
     fn default() -> Self {
-        ThemeSpec::Grey
+        ThemeSpec::Jplot
     }
 }
 

@@ -198,6 +198,21 @@ pub fn lab_ramp(hex_lo: &str, hex_hi: &str, t: f64) -> Color {
     lab_to_rgb([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t])
 }
 
+/// Multi-stop ramp (viridis, gradient2, …): Lab-interpolate between the two
+/// adjacent stops around t. 0/1 stops → the ggplot2 default gradient.
+pub fn multi_ramp(stops: &[String], t: f64) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    if stops.is_empty() {
+        return lab_ramp("#132B43", "#56B1F7", t);
+    }
+    if stops.len() == 1 {
+        return Color::parse(&stops[0]).unwrap_or(Color::black());
+    }
+    let seg = t * (stops.len() - 1) as f64;
+    let i = (seg as usize).min(stops.len() - 2);
+    lab_ramp(&stops[i], &stops[i + 1], seg - i as f64)
+}
+
 // ---------------------------------------------------------------------------
 // Palettes
 // ---------------------------------------------------------------------------
@@ -1072,24 +1087,44 @@ pub struct DiscreteColourScale {
     /// ramp endpoints (Lab-interpolated at draw time)
     pub data_lo: f64,
     pub data_hi: f64,
-    pub ramp: Option<(String, String)>,
+    pub ramp: Vec<String>,
 }
 
 impl DiscreteColourScale {
     pub fn train(levels: Vec<String>, spec: &ScaleSpec) -> Self {
+        Self::train_with_palette(levels, spec, None, &[])
+    }
+    /// theme-aware: `palette` = house discrete palette (None → ggplot2 hue),
+    /// `ramp` = multi-stop hex ramp for the continuous form (empty → default
+    /// 2-stop gradient)
+    pub fn train_with_palette(
+        levels: Vec<String>,
+        spec: &ScaleSpec,
+        palette: Option<&Vec<Color>>,
+        ramp: &[String],
+    ) -> Self {
+        let default_pal = palette.map_or_else(|| hue_palette(levels.len()), |p| p.clone());
         let colours = match spec {
             ScaleSpec::DiscreteManual { values, .. } => {
                 values.iter().filter_map(|s| Color::parse(s)).collect()
             }
-            _ => hue_palette(levels.len()),
+            _ => default_pal.clone(),
         };
         let colours = if colours.len() == levels.len() {
             colours
         } else {
-            hue_palette(levels.len())
+            // resample the house palette to the level count (linear indices)
+            let n = levels.len().max(1);
+            match palette {
+                Some(p) if !p.is_empty() => (0..n)
+                    .map(|i| p[(i * p.len()) / n])
+                    .collect(),
+                _ => hue_palette(n),
+            }
         };
         let name = match spec {
             ScaleSpec::DiscreteManual { name, .. } => name.clone(),
+            ScaleSpec::Gradient { name, .. } => name.clone(),
             _ => None,
         };
         DiscreteColourScale {
@@ -1099,17 +1134,21 @@ impl DiscreteColourScale {
             data_lo: 0.0,
             data_hi: 1.0,
             ramp: match spec {
-                ScaleSpec::Gradient { low, high, .. } => Some((low.clone(), high.clone())),
-                _ => None,
+                ScaleSpec::Gradient { low, high, .. } => vec![low.clone(), high.clone()],
+                _ => ramp.to_vec(),
             },
         }
     }
-    /// continuous ramp endpoints: explicit scale colours or the default
-    /// ggplot2 Lab gradient (#132B43 → #56B1F7, scales::pal_grad probe-verified)
+    /// continuous ramp colour at t∈[0,1], Lab-interpolated across all stops
+    /// (empty ramp → ggplot2 default gradient #132B43→#56B1F7).
+    pub fn ramp_color(&self, t: f64) -> Color {
+        multi_ramp(&self.ramp, t)
+    }
     pub fn ramp_hex(&self) -> (&str, &str) {
-        match &self.ramp {
-            Some((a, b)) => (a.as_str(), b.as_str()),
-            None => ("#132B43", "#56B1F7"),
+        // legacy 2-stop accessor (gradient bar fallback)
+        match (self.ramp.first(), self.ramp.last()) {
+            (Some(a), Some(b)) if self.ramp.len() == 2 => (a.as_str(), b.as_str()),
+            _ => ("#132B43", "#56B1F7"),
         }
     }
     pub fn map(&self, level: &str) -> Color {

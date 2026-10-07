@@ -11,6 +11,10 @@ pub enum ThemeKind {
     Bw,
     Minimal,
     Classic,
+    /// jplot house style: white panel, Okabe-Ito colour-blind-safe discrete
+    /// palette, viridis continuous ramp, horizontal-only light gridlines,
+    /// black axis text — modern scientific-figure conventions.
+    Jplot,
 }
 
 #[derive(Debug, Clone)]
@@ -28,7 +32,16 @@ pub struct Theme {
     pub panel_border: bool,
     /// axis lines (classic: yes)
     pub axis_line: bool,
-    /// axis ticks length in pt (3.2pt? ggplot2 axis.ticks.length = unit(0.25,"cm")=7.1pt)
+    /// draw vertical major gridlines (jplot style: horizontal only)
+    pub grid_x: bool,
+    /// draw horizontal major gridlines
+    pub grid_y: bool,
+    /// axis/tick text colour (jplot: black for print contrast)
+    pub axis_text: Color,
+    /// discrete colour palette (None = ggplot2 hue palette)
+    pub discrete_palette: Option<Vec<Color>>,
+    /// continuous colour ramp: hex stops, Lab-interpolated (default 2-stop)
+    pub ramp: Vec<String>,
     /// axis.ticks.length = rel(0.5) × half_line (ggplot2 4.x theme_grey)
     pub tick_length_pt: f64,
     pub ink: Color,
@@ -40,6 +53,8 @@ impl Theme {
         let base_size = 11.0;
         let ink = Color::black();
         let paper = Color::white();
+        // ggplot2 axis.text colour col_mix(ink,paper,0.302) ≈ #4D4D4D
+        let gg_axis = Color::rgb(77, 77, 77);
         match kind {
             ThemeKind::Grey => Theme {
                 kind,
@@ -50,6 +65,11 @@ impl Theme {
                 panel_grid_minor: false,
                 panel_border: false,
                 axis_line: false,
+                grid_x: true,
+                grid_y: true,
+                axis_text: gg_axis,
+                discrete_palette: None,
+                ramp: vec![],
                 tick_length_pt: 2.75, // rel(0.5) * half_line
                 ink,
                 paper,
@@ -63,6 +83,11 @@ impl Theme {
                 panel_grid_minor: false,
                 panel_border: true,
                 axis_line: false,
+                grid_x: true,
+                grid_y: true,
+                axis_text: gg_axis,
+                discrete_palette: None,
+                ramp: vec![],
                 tick_length_pt: 2.75,
                 ink,
                 paper,
@@ -76,6 +101,11 @@ impl Theme {
                 panel_grid_minor: false,
                 panel_border: false,
                 axis_line: false,
+                grid_x: true,
+                grid_y: true,
+                axis_text: gg_axis,
+                discrete_palette: None,
+                ramp: vec![],
                 tick_length_pt: 2.75,
                 ink,
                 paper,
@@ -89,6 +119,29 @@ impl Theme {
                 panel_grid_minor: false,
                 panel_border: false,
                 axis_line: true,
+                grid_x: false,
+                grid_y: false,
+                axis_text: gg_axis,
+                discrete_palette: None,
+                ramp: vec![],
+                tick_length_pt: 2.75,
+                ink,
+                paper,
+            },
+            ThemeKind::Jplot => Theme {
+                kind,
+                base_size,
+                panel_bg: paper,
+                panel_grid: Color::rgb(224, 224, 224),
+                panel_grid_major: true,
+                panel_grid_minor: false,
+                panel_border: false,
+                axis_line: false,
+                grid_x: false, // horizontal-only gridlines
+                grid_y: true,
+                axis_text: Color::black(), // print-ready contrast
+                discrete_palette: Some(okabe_ito()),
+                ramp: viridis_stops(),
                 tick_length_pt: 2.75,
                 ink,
                 paper,
@@ -113,6 +166,43 @@ impl Theme {
         self.half_line() * 0.5 // axis.ticks etc use half_line; panel margin 0
     }
 }
+
+/// Okabe-Ito colour-blind-safe palette (ggsci::pal_okabe_ito order).
+pub fn okabe_ito() -> Vec<Color> {
+    [
+        (0xE6, 0x9F, 0x00),
+        (0x56, 0xB4, 0xE9),
+        (0x00, 0x9E, 0x73),
+        (0xF0, 0xE4, 0x42),
+        (0x00, 0x72, 0xB2),
+        (0xD5, 0x5E, 0x00),
+        (0xCC, 0x79, 0xA7),
+        (0x00, 0x00, 0x00),
+    ]
+    .into_iter()
+    .map(|(r, g, b)| Color::rgb(r, g, b))
+    .collect()
+}
+
+/// viridis LUT stops (matplotlib), Lab-interpolated between neighbours.
+pub fn viridis_stops() -> Vec<String> {
+    [
+        "#440154",
+        "#482878",
+        "#3E4A89",
+        "#31688E",
+        "#26828E",
+        "#1F9E89",
+        "#35B779",
+        "#6DCD59",
+        "#B4DE2C",
+        "#FDE725",
+    ]
+    .into_iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
 
 /// Default geom constants from ggplot2 source (refs/ggplot2/R/geom-*.R).
 pub mod geom_defaults {

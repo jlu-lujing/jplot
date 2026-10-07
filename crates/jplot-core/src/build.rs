@@ -610,6 +610,8 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
         return Err(JplotError::InvalidSpec("plot has no layers".into()));
     }
     let base = Frame::from_dataset(&spec.data)?;
+    // house theme drives default palettes for unmapped scales
+    let theme = crate::theme::Theme::new(spec.theme.kind());
 
     // 1. resolve per-layer frames
     let mut frames: Vec<Frame> = Vec::new();
@@ -882,10 +884,10 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
         let spec = spec.scales.get(name).cloned().unwrap_or_default();
         if !levels.is_empty() {
             order_levels(&mut levels, declared.as_ref());
-            Some(DiscreteColourScale::train(levels, &spec))
+            Some(DiscreteColourScale::train_with_palette(levels, &spec, theme.discrete_palette.as_ref(), &theme.ramp))
         } else if cont_vals.len() > 1 {
             // continuous colour: ramp scale over the data range
-            let mut s = DiscreteColourScale::train(vec![], &spec);
+            let mut s = DiscreteColourScale::train_with_palette(vec![], &spec, None, &theme.ramp);
             let lo = cont_vals.iter().cloned().fold(f64::INFINITY, f64::min);
             let hi = cont_vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
             s.data_lo = lo;
