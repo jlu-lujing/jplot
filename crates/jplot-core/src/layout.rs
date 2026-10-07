@@ -343,7 +343,8 @@ fn auto_label_of(bp: &BuiltPlot, aes: &str) -> Option<String> {
     if aes == "y" {
         let count_stat = bp.layers.iter().any(|l| {
             use crate::spec::GeomSpec;
-            matches!(l.geom, GeomSpec::Bar | GeomSpec::Histogram { .. }) && !l.aes.contains_key("y")
+            matches!(l.geom, GeomSpec::Bar | GeomSpec::Histogram { .. } | GeomSpec::Freqpoly { .. })
+                && !l.aes.contains_key("y")
         });
         if count_stat {
             return Some("count".into());
@@ -369,9 +370,87 @@ fn draw_layer(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &Built
     use crate::spec::GeomSpec;
     match l.geom {
         GeomSpec::Point { .. } => draw_points(ops, l, bp, vp),
-        GeomSpec::Line => draw_lines(ops, l, bp, vp),
+        GeomSpec::Line | GeomSpec::Freqpoly { .. } => draw_lines(ops, l, bp, vp),
+        GeomSpec::Step => draw_step(ops, l, bp, vp),
         GeomSpec::Col | GeomSpec::Bar | GeomSpec::Histogram { .. } => draw_bars(ops, l, bp, vp),
         GeomSpec::Boxplot => draw_boxplot(ops, l, bp, vp),
+        GeomSpec::Hline => draw_hline(ops, l, bp, vp),
+        GeomSpec::Vline => draw_vline(ops, l, bp, vp),
+    }
+}
+
+/// geom_step direction="hv": hold y, then step vertically at the next x.
+fn draw_step(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
+    let width_px = l.args.f64_("linewidth").map(geom_lw).unwrap_or(geom_lw(0.5));
+    let (xs, ys) = (l.frame.get("x").cloned().unwrap_or_default(), l.frame.get("y").cloned().unwrap_or_default());
+    let n_groups = l.group_ids.iter().cloned().max().map_or(0, |m| m + 1);
+    for g in 0..n_groups.max(1) {
+        let mut idx: Vec<usize> = (0..xs.len()).filter(|&i| n_groups <= 1 || l.group_ids.get(i) == Some(&g)).collect();
+        if idx.is_empty() {
+            continue;
+        }
+        let rep = idx[0];
+        idx.sort_by_key(|&i| (xs[i] * 1e6).round() as i64);
+        let pts: Vec<(f64, f64)> = idx
+            .into_iter()
+            .filter(|&i| xs[i].is_finite() && ys[i].is_finite())
+            .map(|i| (vp.map_x(&bp.x_scale, xs[i]), vp.map_y(&bp.y_scale, ys[i])))
+            .collect();
+        if pts.len() < 2 {
+            continue;
+        }
+        // insert a horizontal carry point (x[i+1], y[i]) before each vertical jump
+        let mut stair: Vec<(f64, f64)> = vec![pts[0]];
+        for w in pts.windows(2) {
+            stair.push((w[1].0, w[0].1));
+            stair.push(w[1]);
+        }
+        ops.push(Primitive::Polyline {
+            points: stair,
+            stroke: Some(Line::solid(point_colour_of(l, rep, bp), width_px)),
+            fill: None,
+            closed: false,
+        });
+    }
+}
+
+/// geom_hline / geom_vline: constant lines across the panel. Intercept comes
+/// from the mapped aes column ("y"/"x") or the yintercept/xintercept param.
+fn draw_hline(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
+    let width_px = l.args.f64_("linewidth").map(geom_lw).unwrap_or(geom_lw(0.5));
+    let ys = l
+        .frame
+        .get("y")
+        .cloned()
+        .or_else(|| l.args.f64_("yintercept").map(|v| vec![v]))
+        .unwrap_or_default();
+    let n = l.frame.n.max(1);
+    for (i, &y) in ys.iter().enumerate() {
+        if !y.is_finite() {
+            continue;
+        }
+        let py = vp.map_y(&bp.y_scale, y);
+        let c = point_colour_of(l, i.min(n - 1), bp);
+        ops.push(Primitive::Segment { x1: vp.x0, y1: py, x2: vp.x1, y2: py, stroke: Line::solid(c, width_px) });
+    }
+}
+
+fn draw_vline(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
+    let width_px = l.args.f64_("linewidth").map(geom_lw).unwrap_or(geom_lw(0.5));
+    let xs = l
+        .frame
+        .get("x")
+        .cloned()
+        .or_else(|| l.args.f64_("xintercept").map(|v| vec![v]))
+        .unwrap_or_default();
+    let n = l.frame.n.max(1);
+    for (i, &x) in xs.iter().enumerate() {
+        if !x.is_finite() {
+            continue;
+        }
+        let px = vp.map_x(&bp.x_scale, x);
+        let c = point_colour_of(l, i.min(n - 1), bp);
+        ops.push(Primitive::Segment { x1: px, y1: vp.y0, x2: px, y2: vp.y1, stroke: Line::solid(c, width_px) });
     }
 }
 

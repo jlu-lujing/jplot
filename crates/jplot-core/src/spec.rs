@@ -48,6 +48,15 @@ pub enum GeomSpec {
     },
     /// geom_boxplot
     Boxplot,
+    /// geom_freqpoly: histogram counts drawn as a line over bin centres
+    Freqpoly {
+        bins: usize,
+    },
+    /// geom_step: piecewise-constant line (hist / up / down)
+    Step,
+    /// geom_hline / geom_vline: constant lines (intercept from aes or param)
+    Hline,
+    Vline,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

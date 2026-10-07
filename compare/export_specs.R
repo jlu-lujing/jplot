@@ -48,7 +48,11 @@ layer <- function(geom, ..., stat = NULL, position = list(kind = "identity"), ma
     col = list(kind = "col"),
     bar = list(kind = "bar"),
     histogram = list(kind = "histogram", bins = 30),
-    boxplot = list(kind = "boxplot")
+    boxplot = list(kind = "boxplot"),
+    freqpoly = list(kind = "freqpoly", bins = 30),
+    step = list(kind = "step"),
+    hline = list(kind = "hline"),
+    vline = list(kind = "vline")
   )
   list(geom = g, stat = stat, position = position,
        mapping = if (is.null(mapping)) list(map = list()) else list(map = mapping),
@@ -200,5 +204,24 @@ render("21_point_params", ggplot(df, aes(disp, mpg)) + geom_point(
 save("22_shape1", spec(df, list(x = "disp", y = "mpg"), list(layer("point",
   args = list(shape = 1)))))
 render("22_shape1", ggplot(df, aes(disp, mpg)) + geom_point(shape = 1))
+
+## 23 step ------------------------------------------------------------
+save("23_step", spec(ds, list(x = "x", y = "y", colour = "g"), list(layer("step"))))
+render("23_step", ggplot(ds, aes(x, y, colour = g)) + geom_step())
+
+## 24 freqpoly --------------------------------------------------------
+save("24_freqpoly", spec(df, list(x = "mpg"), list(layer("freqpoly", args = list(bins = 10)))))
+render("24_freqpoly", ggplot(df, aes(mpg)) + geom_freqpoly(bins = 10))
+
+## 25 hline + vline over a scatter ------------------------------------
+hp <- df; hp$hp_ref <- mean(hp$mpg)
+save("25_hline", spec(hp, list(x = "disp", y = "mpg"),
+     list(layer("point"), layer("hline", args = list(yintercept = mean(hp$mpg))))))
+render("25_hline", ggplot(hp, aes(disp, mpg)) + geom_point() + geom_hline(yintercept = mean(hp$mpg), colour = "red"))
+
+## 26 vline -----------------------------------------------------------
+save("26_vline", spec(hp, list(x = "disp", y = "mpg"),
+     list(layer("point"), layer("vline", args = list(xintercept = mean(hp$disp))))))
+render("26_vline", ggplot(hp, aes(disp, mpg)) + geom_point() + geom_vline(xintercept = mean(hp$disp), colour = "blue"))
 
 cat("exported", length(list.files("specs")), "specs + refs\n")

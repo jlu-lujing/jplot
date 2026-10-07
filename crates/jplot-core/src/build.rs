@@ -601,7 +601,7 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
         let _ = column_from_spec; // keep import for future constants path
         let stat = l.stat.clone().unwrap_or(match l.geom {
             GeomSpec::Bar => StatSpec::Count { width: None },
-            GeomSpec::Histogram { bins } => StatSpec::Bin {
+            GeomSpec::Histogram { bins } | GeomSpec::Freqpoly { bins } => StatSpec::Bin {
                 bins: l.args.f64_("bins").map(|v| v as usize).unwrap_or(bins),
                 breaks: l.args.nums("breaks").filter(|b| b.len() >= 2),
                 binwidth: l.args.f64_("binwidth"),
@@ -642,7 +642,44 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
                 f.set("xmax", xs.iter().map(|x| x + w / 2.0).collect());
                 f.set("ymin", vec![0.0; f.n]);
             }
-            GeomSpec::Point { .. } | GeomSpec::Line => {}
+            GeomSpec::Point { .. } | GeomSpec::Line | GeomSpec::Step => {}
+            GeomSpec::Freqpoly { .. } => {
+                // ggplot2 StatBin + geom_freqpoly: extend the line to y=0 one
+                // bin-width beyond the outer bin centres.
+                if let (Some(cs), Some(w)) = (f.get("x").cloned(), f.get("width").cloned()) {
+                    if let (Some(&first), Some(&last)) = (cs.first(), cs.last()) {
+                        let w = w[0];
+                        let mut xs = cs.clone();
+                        let mut ys = f.get("y").cloned().unwrap_or_default();
+                        xs.insert(0, first - w);
+                        xs.push(last + w);
+                        ys.insert(0, 0.0);
+                        ys.push(0.0);
+                        f.set("x", xs);
+                        f.set("y", ys);
+                    }
+                }
+            }
+            GeomSpec::Hline => {
+                // hline ignores the inherited y mapping; the intercept comes
+                // from the param (single) or a mapped yintercept column.
+                if let Some(v) = l.args.f64_("yintercept") {
+                    f.set("y", vec![v]);
+                } else if f.get("y").is_none() {
+                    if let Some(v) = f.get("yintercept").cloned() {
+                        f.set("y", v);
+                    }
+                }
+            }
+            GeomSpec::Vline => {
+                if let Some(v) = l.args.f64_("xintercept") {
+                    f.set("x", vec![v]);
+                } else if f.get("x").is_none() {
+                    if let Some(v) = f.get("xintercept").cloned() {
+                        f.set("x", v);
+                    }
+                }
+            }
         }
         frames.push(f);
         aes_map.push(aes);
