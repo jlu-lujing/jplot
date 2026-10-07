@@ -65,6 +65,18 @@ pub enum StatSpec {
         /// optional explicit bin edges
         #[serde(default, skip_serializing_if = "Option::is_none")]
         breaks: Option<Vec<f64>>,
+        /// explicit bin width (overrides bins-derived width)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        binwidth: Option<f64>,
+        /// bin centres must sit at center + k*width
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        center: Option<f64>,
+        /// bin edges must pass through boundary
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        boundary: Option<f64>,
+        /// "right" (default) | "left"
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        closed: Option<String>,
     },
     /// boxplot summary: quantile(0.25), median, quantile(0.75), whiskers, outliers
     Boxplot {
@@ -168,6 +180,23 @@ impl GeomArgs {
         keys.iter()
             .find_map(|k| self.s(k))
             .and_then(crate::scale::Color::parse)
+    }
+    /// numeric vector param (e.g. histogram `breaks`, `limits`) — a JSON
+    /// array of numbers, or a single number. R exports `[]`/single scalars.
+    pub fn nums(&self, key: &str) -> Option<Vec<f64>> {
+        match self.map.get(key)? {
+            serde_json::Value::Array(a) => {
+                let v: Vec<f64> =
+                    a.iter().filter_map(|x| x.as_f64().or_else(|| x.as_str().and_then(|s| s.parse().ok()))).collect();
+                if v.is_empty() {
+                    None
+                } else {
+                    Some(v)
+                }
+            }
+            serde_json::Value::Number(n) => n.as_f64().map(|f| vec![f]),
+            _ => None,
+        }
     }
 }
 
@@ -425,7 +454,8 @@ pub fn geom_bar() -> LayerSpec {
 pub fn geom_histogram(bins: usize) -> LayerSpec {
     LayerSpec {
         geom: GeomSpec::Histogram { bins },
-        stat: Some(StatSpec::Bin { bins, breaks: None }),
+        // stat derived at build time from geom + args (binwidth/center/breaks)
+        stat: None,
         ..Default::default()
     }
 }

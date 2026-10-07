@@ -170,4 +170,20 @@ save("15_log10lim", spec(df, list(x = "disp", y = "mpg"), list(layer("point")),
                              limits = list(15, 30)))))
 render("15_log10lim", ggplot(df, aes(disp, mpg)) + geom_point() + scale_y_log10(limits = c(15, 30)))
 
+## 16 histogram binwidth ---------------------------------------------------
+save("16_hist_bw", spec(df, list(x = "mpg"), list(layer("histogram", args = list(binwidth = 3)))))
+render("16_hist_bw", ggplot(df, aes(mpg)) + geom_histogram(binwidth = 3))
+
+## 17 histogram boundary ---------------------------------------------------
+save("17_hist_bound", spec(df, list(x = "mpg"), list(layer("histogram", args = list(bins = 10, boundary = 0)))))
+render("17_hist_bound", ggplot(df, aes(mpg)) + geom_histogram(bins = 10, boundary = 0))
+
+## 18 histogram center -----------------------------------------------------
+save("18_hist_center", spec(df, list(x = "mpg"), list(layer("histogram", args = list(bins = 10, center = 10)))))
+render("18_hist_center", ggplot(df, aes(mpg)) + geom_histogram(bins = 10, center = 10))
+
+## 19 histogram explicit bins ---------------------------------------------
+save("19_hist_bins", spec(df, list(x = "mpg"), list(layer("histogram", args = list(bins = 8)))))
+render("19_hist_bins", ggplot(df, aes(mpg)) + geom_histogram(bins = 8))
+
 cat("exported", length(list.files("specs")), "specs + refs\n")

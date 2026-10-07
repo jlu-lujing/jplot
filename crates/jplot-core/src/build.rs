@@ -109,44 +109,74 @@ fn fullseq(min: f64, max: f64, size: f64) -> Vec<f64> {
     (0..n).map(|i| start + i as f64 * size).collect()
 }
 
-/// ggplot2 4.x `bin_breaks_bins` + `bin_breaks_width` (refs/ggplot2/R/bin.R).
-/// Returns bin CENTRES over `bins` equal-width bins spanning [min, max], with
-/// boundary offset so min/max sit in the outer half-bins.
-pub fn default_bins(min: f64, max: f64, bins: usize) -> (Vec<f64>, f64) {
+/// ggplot2 4.x `bin_breaks_bins` (refs/ggplot2/R/bin.R): derive a bin width
+/// from `bins` then delegate to `bin_breaks_width`. Returns bin EDGES.
+pub fn bin_breaks_bins(min: f64, max: f64, bins: usize, mut center: Option<f64>, mut boundary: Option<f64>) -> Vec<f64> {
     let bins = bins.max(1);
-    let (width, boundary) = if max - min < 1e-12 {
-        (0.1, min)
+    let mut width;
+    if (max - min).abs() < 1e-12 {
+        width = 0.1; // same width as default_expansion on 0-width data
     } else if bins == 1 {
-        (max - min, min)
+        width = max - min;
+        boundary = Some(min);
+        center = None;
     } else {
-        let mut width = (max - min) / (bins as f64 - 1.0);
-        let mut boundary = min - width / 2.0;
-        // R: if any(x_range %% width == boundary %% width) use /bins
-        let eq = (min.rem_euclid(width) - boundary.rem_euclid(width)).abs() < 1e-9
-            || (max.rem_euclid(width) - boundary.rem_euclid(width)).abs() < 1e-9;
-        if eq {
-            width = (max - min) / bins as f64;
-            boundary = min - width / 2.0;
+        width = (max - min) / (bins as f64 - 1.0);
+        if center.is_none() {
+            boundary = boundary.or(Some(min - width / 2.0));
         }
-        (width, boundary)
-    };
+        // If x_range coincides with boundary, use exact `bins` (not bins-1).
+        if let Some(b) = boundary {
+            let eq = (min.rem_euclid(width) - b.rem_euclid(width)).abs() < 1e-9
+                || (max.rem_euclid(width) - b.rem_euclid(width)).abs() < 1e-9;
+            if eq {
+                width = (max - min) / bins as f64;
+            }
+        }
+    }
+    bin_breaks_width_edges(min, max, width, center, boundary)
+}
+
+/// ggplot2 `bin_breaks_width`: left-align bins to boundary (or center),
+/// then seq from the first origin past min up to max. Returns bin EDGES.
+fn bin_breaks_width_edges(min: f64, max: f64, width: f64, center: Option<f64>, boundary: Option<f64>) -> Vec<f64> {
+    let width = if width <= 0.0 || !width.is_finite() { 1.0 } else { width };
+    let boundary = boundary.unwrap_or_else(|| match center {
+        Some(c) => c - width / 2.0,
+        None => width / 2.0, // tile-layer default: min/max in outer half-bins
+    });
     let shift = ((min - boundary) / width).floor();
     let origin = boundary + shift * width;
     let max_x = max + (1.0 - 1e-8) * width;
     let n_breaks = (((max_x - origin) / width).floor() as usize) + 1;
-    let edges: Vec<f64> = (0..n_breaks.max(2)).map(|i| origin + i as f64 * width).collect();
-    let centres = edges.windows(2).map(|e| (e[0] + e[1]) / 2.0).collect();
-    (centres, width)
+    (0..n_breaks.max(2)).map(|i| origin + i as f64 * width).collect()
 }
 
-/// ggplot2 bin_breaks (closed = "right"): index of the (a, b] bin for v.
-fn bin_index(v: f64, origin: f64, width: f64, n_bins: usize) -> usize {
+/// ggplot2 4.x `bin_breaks_bins` + `bin_breaks_width` (refs/ggplot2/R/bin.R).
+/// Returns bin CENTRES over `bins` equal-width bins spanning [min, max], with
+/// boundary offset so min/max sit in the outer half-bins.
+pub fn default_bins(min: f64, max: f64, bins: usize) -> (Vec<f64>, f64) {
+    let edges = bin_breaks_bins(min, max, bins, None, None);
+    let width = if edges.len() >= 2 { edges[1] - edges[0] } else { 1.0 };
+    (edges.windows(2).map(|e| (e[0] + e[1]) / 2.0).collect(), width)
+}
+
+/// ggplot2 bin_breaks: index of the bin for v.
+/// `closed == "right"`: (a, b] bins (edge → the bin ending at it);
+/// `closed == "left"`: [a, b) bins (edge → the bin starting at it).
+fn bin_index(v: f64, origin: f64, width: f64, n_bins: usize, closed_right: bool) -> usize {
     let rel = (v - origin) / width;
-    let idx = if (rel - rel.round()).abs() < 1e-9 {
-        // exact edge → right-closed: the bin whose right edge == v
-        rel.round() as i64 - 1
-    } else {
+    let on_edge = (rel - rel.round()).abs() < 1e-9;
+    let idx = if on_edge {
+        if closed_right {
+            rel.round() as i64 - 1
+        } else {
+            rel.round() as i64
+        }
+    } else if closed_right {
         rel.floor() as i64
+    } else {
+        rel.ceil() as i64 - 1
     };
     (idx.max(0) as usize).min(n_bins - 1)
 }
@@ -194,29 +224,37 @@ fn compute_stat(f: &Frame, spec: &StatSpec) -> Frame {
             out.set("y", ys);
             out
         }
-        StatSpec::Bin { bins, breaks } => {
+        StatSpec::Bin { bins, breaks, binwidth, center, boundary, closed } => {
             let xs = f.get("x").cloned().unwrap_or_default();
             let finite: Vec<f64> = xs.iter().cloned().filter(|v| v.is_finite()).collect();
             let (lo, hi) = match Range::from_values(&finite) {
                 Some(r) => (r.min, r.max),
                 None => (0.0, 1.0),
             };
-            let (centres, width) = match breaks {
-                Some(b) if b.len() >= 2 => {
-                    let w = b.windows(2).map(|x| x[1] - x[0]).sum::<f64>() / (b.len() - 1) as f64;
-                    (b.windows(2).map(|e| (e[0] + e[1]) / 2.0).collect(), w)
-                }
-                _ => default_bins(lo, hi, *bins),
+            // ggplot2 StatBin$compute_group precedence: explicit `breaks`
+            // wins; then `binwidth` (bin_breaks_width) beats `bins`
+            // (bin_breaks_bins). center/boundary align the grid either way.
+            let edges: Vec<f64> = match breaks {
+                Some(b) if b.len() >= 2 => b.clone(),
+                _ => match binwidth {
+                    Some(w) => bin_breaks_width_edges(lo, hi, *w, *center, *boundary),
+                    None => bin_breaks_bins(lo, hi, *bins, *center, *boundary),
+                },
             };
-            let origin = centres[0] - width / 2.0;
+            let closed_right = closed.as_deref() != Some("left");
+            let origin = edges[0];
+            let width = if edges.len() >= 2 { edges[1] - edges[0] } else { 1.0 };
+            let centres: Vec<f64> = edges.windows(2).map(|e| (e[0] + e[1]) / 2.0).collect();
             let mut counts = vec![0.0f64; centres.len()];
             let nb = counts.len();
             for &v in &finite {
-                counts[bin_index(v, origin, width, nb)] += 1.0;
+                if nb > 0 {
+                    counts[bin_index(v, origin, width, nb, closed_right)] += 1.0;
+                }
             }
             let mut out = Frame::new();
-            let xmin: Vec<f64> = centres.iter().map(|c| c - width / 2.0).collect();
-            let xmax: Vec<f64> = centres.iter().map(|c| c + width / 2.0).collect();
+            let xmin: Vec<f64> = edges.windows(2).map(|e| e[0]).collect();
+            let xmax: Vec<f64> = edges.windows(2).map(|e| e[1]).collect();
             out.set("x", centres.clone());
             out.set("y", counts);
             out.set("xmin", xmin);
@@ -561,7 +599,14 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
         let _ = column_from_spec; // keep import for future constants path
         let stat = l.stat.clone().unwrap_or(match l.geom {
             GeomSpec::Bar => StatSpec::Count { width: None },
-            GeomSpec::Histogram { bins } => StatSpec::Bin { bins, breaks: None },
+            GeomSpec::Histogram { bins } => StatSpec::Bin {
+                bins: l.args.f64_("bins").map(|v| v as usize).unwrap_or(bins),
+                breaks: l.args.nums("breaks").filter(|b| b.len() >= 2),
+                binwidth: l.args.f64_("binwidth"),
+                center: l.args.f64_("center"),
+                boundary: l.args.f64_("boundary"),
+                closed: l.args.s("closed").map(|s| s.to_string()),
+            },
             GeomSpec::Boxplot => StatSpec::Boxplot { coef: None },
             _ => StatSpec::Identity,
         });
