@@ -229,12 +229,12 @@ render("24_freqpoly", ggplot(df, aes(mpg)) + geom_freqpoly(bins = 10))
 ## 25 hline + vline over a scatter ------------------------------------
 hp <- df; hp$hp_ref <- mean(hp$mpg)
 save("25_hline", spec(hp, list(x = "disp", y = "mpg"),
-     list(layer("point"), layer("hline", args = list(yintercept = mean(hp$mpg))))))
+     list(layer("point"), layer("hline", args = list(yintercept = mean(hp$mpg), colour = "red")))))
 render("25_hline", ggplot(hp, aes(disp, mpg)) + geom_point() + geom_hline(yintercept = mean(hp$mpg), colour = "red"))
 
 ## 26 vline -----------------------------------------------------------
 save("26_vline", spec(hp, list(x = "disp", y = "mpg"),
-     list(layer("point"), layer("vline", args = list(xintercept = mean(hp$disp))))))
+     list(layer("point"), layer("vline", args = list(xintercept = mean(hp$disp), colour = "blue")))))
 render("26_vline", ggplot(hp, aes(disp, mpg)) + geom_point() + geom_vline(xintercept = mean(hp$disp), colour = "blue"))
 
 ## 27 stacked bar ----------------------------------------------------------
@@ -311,7 +311,7 @@ render("41_pointrange", ggplot(dpr, aes(x, y, ymin = ymin, ymax = ymax)) + geom_
 
 ## 42 abline + errorbarh --------------------------------------------------------
 save("42_ablineh", spec(df, list(x = "disp", y = "mpg"),
-     list(layer("point"), layer("abline", args = list(intercept = 30, slope = -0.04)))))
+     list(layer("point"), layer("abline", args = list(intercept = 30, slope = -0.04, colour = "red")))))
 render("42_ablineh", ggplot(df, aes(disp, mpg)) + geom_point() + geom_abline(intercept = 30, slope = -0.04, colour = "red"))
 
 
