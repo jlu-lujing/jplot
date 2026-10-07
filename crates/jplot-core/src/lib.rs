@@ -5,11 +5,13 @@ pub mod error;
 pub mod geom;
 pub mod guides;
 pub mod layout;
+pub mod position;
 pub mod probes;
 pub mod scene;
 pub mod serde_util;
 pub mod scale;
 pub mod spec;
+pub mod stat;
 pub mod text;
 pub mod theme;
 
