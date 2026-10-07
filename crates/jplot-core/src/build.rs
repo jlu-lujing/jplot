@@ -183,6 +183,7 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
             GeomSpec::Bar => StatSpec::Count { width: None },
             GeomSpec::Histogram { bins } | GeomSpec::Freqpoly { bins } => StatSpec::Bin {
                 bins: l.args.f64_("bins").map(|v| v as usize).unwrap_or(bins),
+                extend: matches!(l.geom, GeomSpec::Freqpoly { .. }),
                 breaks: l.args.nums("breaks").filter(|b| b.len() >= 2),
                 binwidth: l.args.f64_("binwidth"),
                 center: l.args.f64_("center"),

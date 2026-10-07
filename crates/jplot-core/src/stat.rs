@@ -285,8 +285,10 @@ pub fn bw_nrd0(x: &[f64]) -> f64 {
     sx.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let q1 = quantile_sorted(&sx, 0.25);
     let q3 = quantile_sorted(&sx, 0.75);
-    let lo = sd.min((q3 - q1) / 1.34).max(sd.min(f64::EPSILON).max(sd));
-    let lo = if lo <= 0.0 || !lo.is_finite() { sd.max(1.0) } else { lo };
+    // R's bw.nrd0: bw <- 0.9 * min(sd, IQR/1.34) * n^(-1/5)
+    let iqr = (q3 - q1) / 1.34;
+    let lo = if iqr > 0.0 && iqr.is_finite() { sd.min(iqr) } else { sd };
+    let lo = if lo > 0.0 && lo.is_finite() { lo } else { 1.0 };
     0.9 * lo * n.powf(-0.2)
 }
 
@@ -457,7 +459,7 @@ pub fn compute_stat(f: &Frame, spec: &StatSpec) -> Frame {
             out.set("y", ys);
             out
         }
-        StatSpec::Bin { bins, breaks, binwidth, center, boundary, closed } => {
+        StatSpec::Bin { bins, extend, breaks, binwidth, center, boundary, closed } => {
             let xs = f.get("x").cloned().unwrap_or_default();
             let finite: Vec<f64> = xs.iter().cloned().filter(|v| v.is_finite()).collect();
             let (lo, hi) = match Range::from_values(&finite) {
@@ -631,10 +633,10 @@ pub fn compute_stat(f: &Frame, spec: &StatSpec) -> Frame {
             if b <= 0.0 || !b.is_finite() {
                 b = 1.0;
             }
-            // ggplot2 4.0.3 layer_data: the 512-pt grid spans the DATA range
-            // (min..max); the ±3·bw padding lives inside the estimate, not the
-            // output grid. R's `trim` additionally drops nothing (same range).
-            let (gx, gy) = gaussian_density(&x, b, n.unwrap_or(512), true);
+            // ggplot2 4.0.3 layer_data: the 512-pt grid spans min−3·bw ..
+            // max+3·bw even for trim=TRUE (the `trim` flag governs DRAWING,
+            // not the computed grid — probe 47: R x[1]=2.970 = 10.4−3bw)
+            let (gx, gy) = gaussian_density(&x, b, n.unwrap_or(512), false);
             let mut out = Frame::new();
             out.set("x", gx);
             out.set("y", gy);
