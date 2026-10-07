@@ -270,6 +270,9 @@ pub fn compute_stat(f: &Frame, spec: &StatSpec) -> Frame {
         StatSpec::Ydensity { bw, adjust, n, trim: _trim, scale } => {
             let xs = f.get("x").cloned().unwrap_or_default();
             let ys = f.get("y").cloned().unwrap_or_default();
+            // factor labels keyed by the ordinal x values (stat runs BEFORE
+            // ordinalise; labels must survive, like StatBoxplot's set_cat)
+            let xcats: Option<Vec<String>> = f.cat.get("x").cloned();
             let mut out = Frame::new();
             // group by discrete x values (1-based ordinal already mapped)
             let mut uniq: Vec<f64> = xs.iter().cloned().filter(|v| v.is_finite()).collect();
@@ -315,10 +318,19 @@ pub fn compute_stat(f: &Frame, spec: &StatSpec) -> Frame {
             let mut vw: Vec<f64> = Vec::new();
             let mut gn: Vec<f64> = Vec::new();
             let mut wid: Vec<f64> = Vec::new();
+            let mut xlab: Vec<String> = Vec::new();
             for (ux, gx, gy, nn) in &per_group {
                 let nnf = *nn as f64;
                 for (j, &yv) in gy.iter().enumerate() {
                     xo.push(*ux);
+                    if let Some(cats) = &xcats {
+                        // label for this ordinal = the label on ANY input row
+                        // whose ordinal x matches (row order ≠ level order!)
+                        let lab = (0..xs.len())
+                            .find(|&i| (xs[i] - ux).abs() < 1e-9)
+                            .and_then(|i| cats.get(i).cloned());
+                        xlab.push(lab.unwrap_or_default());
+                    }
                     yo.push(gx[j]);
                     let w = match mode {
                         "count" => yv / gmax * (nnf / nmax),
@@ -335,6 +347,12 @@ pub fn compute_stat(f: &Frame, spec: &StatSpec) -> Frame {
             out.set("violinwidth", vw);
             out.set("n", gn);
             out.set("width", wid);
+            if !xlab.is_empty() {
+                out.set_cat("x", xlab);
+                if let Some(decl) = f.levels.get("x") {
+                    out.set_levels("x", decl.clone());
+                }
+            }
             out
         }
         StatSpec::Boxplot { coef } => {
