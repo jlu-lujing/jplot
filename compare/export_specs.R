@@ -67,7 +67,8 @@ layer <- function(geom, ..., stat = NULL, position = list(kind = "identity"), ma
     rect = list(kind = "rect"),
     path = list(kind = "path"),
     density = list(kind = "density"),
-    violin = list(kind = "violin")
+    violin = list(kind = "violin"),
+    smooth = list(kind = "smooth")
   )
   list(geom = g, stat = stat, position = position,
        mapping = if (is.null(mapping)) list(map = list()) else list(map = mapping),
@@ -343,6 +344,16 @@ render("52_viridis", ggplot(df, aes(disp, mpg, colour = cyl)) + geom_point() + s
 save("53_greypal", spec(df, list(x = "cyl", fill = "am"), list(layer("bar", position = list(kind = "dodge", width = 0.9))),
      scales = list(fill = list(kind = "discrete", palette = "grey"))))
 render("53_greypal", ggplot(df, aes(cyl, fill = am)) + geom_bar(position = "dodge") + scale_fill_grey())
+
+## 54–56: geom_smooth ----------------------------------------------------------
+save("54_lm", spec(df, list(x = "disp", y = "mpg"), list(layer("smooth", args = list(method = "lm")))))
+render("54_lm", ggplot(df, aes(disp, mpg)) + geom_smooth(method = "lm"))
+
+save("55_loess", spec(df, list(x = "disp", y = "mpg"), list(layer("smooth"))))
+render("55_loess", ggplot(df, aes(disp, mpg)) + geom_smooth())
+
+save("56_lm_nogroup", spec(df, list(x = "disp", y = "mpg", colour = "cyl"), list(layer("smooth", args = list(method = "lm")))))
+render("56_lm_nogroup", ggplot(df, aes(disp, mpg, colour = cyl)) + geom_smooth(method = "lm"))
 
 save("49_flip_scatter", spec(df, list(x = "disp", y = "mpg"), list(layer("point")),
      theme = list(kind = "grey")) |> append(list(coord = "flip")))

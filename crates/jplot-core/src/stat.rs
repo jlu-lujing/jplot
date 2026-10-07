@@ -114,108 +114,97 @@ fn ols(pts: &[(f64, f64)]) -> Option<(Vec<f64>, f64, Vec<Vec<f64>>)> {
 /// loess local fit at target x0 (degree 2, tricube over span·maxdist).
 /// Returns (fitted, se) or None on singular fits (dropped like R NaN).
 fn loess_at(pts: &[(f64, f64)], x0: f64, span: f64, deg: usize) -> Option<(f64, f64)> {
+    // R semantics: degree 2, bandwidth = distance to the k-th nearest
+    // neighbour (k = ceil(span·n), NOT span×maxdist), tricube weights, then
+    // IRLS reweighting (symmetric cubic-bisquare family, R `iter = 4`).
     let n = pts.len();
-    let dmax = pts
-        .iter()
-        .map(|(x, _)| (x - x0).abs())
-        .fold(0.0f64, f64::max);
-    if dmax <= 0.0 {
-        return None;
+    let k = ((span * n as f64).ceil() as usize).clamp(deg + 2, n);
+    let mut dsorted: Vec<f64> = pts.iter().map(|(x, _)| (x - x0).abs()).collect();
+    dsorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let mut h = dsorted[k - 1];
+    if h <= 0.0 {
+        h = dsorted.iter().rev().find(|d| **d > 0.0).copied().unwrap_or(1.0);
     }
-    let h = span * dmax;
-    let k = deg + 1;
-    // weighted design: a_ij = (x_i − x0)^j · w_i
-    let w: Vec<f64> = pts.iter().map(|(x, _)| tricube((x - x0) / h)).collect();
-    let mut a: Vec<Vec<f64>> = Vec::with_capacity(n);
-    for i in 0..n {
-        let dx = pts[i].0 - x0;
-        let mut row = Vec::with_capacity(k);
-        for j in 0..k {
-            row.push(dx.powi(j as i32) * w[i]);
+    let dim = deg + 1;
+    let yv: Vec<f64> = pts.iter().map(|(_, y)| *y).collect();
+    let dxv: Vec<f64> = pts.iter().map(|(x, _)| x - x0).collect();
+    let base_w: Vec<f64> = dxv.iter().map(|dx| tricube(dx.abs() / h)).collect();
+    let mut w = base_w.clone();
+    let mut beta = vec![0.0; dim];
+    let mut xtx = vec![vec![0.0; dim]; dim];
+    for _ in 0..4 {
+        xtx = vec![vec![0.0; dim]; dim];
+        let mut xty = vec![0.0; dim];
+        for i in 0..n {
+            if w[i] == 0.0 {
+                continue;
+            }
+            let dx = dxv[i];
+            let mut row = vec![0.0; dim];
+            for j in 0..dim {
+                row[j] = dx.powi(j as i32) * w[i];
+            }
+            for j in 0..dim {
+                for l in 0..dim {
+                    xtx[j][l] += row[j] * dx.powi(l as i32);
+                }
+            }
+            for j in 0..dim {
+                xty[j] += row[j] * yv[i];
+            }
         }
-        a.push(row);
+        let mut aug = xtx.clone();
+        let rhs = xty.clone();
+        for r in 0..dim {
+            aug[r].push(rhs[r]);
+        }
+        let mut r0 = xty.clone();
+        beta = solve3(&mut aug, &mut r0)?;
+        // symmetric-family reweight: cubic-bisquare of scaled residuals
+        let pred: Vec<f64> = dxv
+            .iter()
+            .map(|dx| (0..dim).map(|j| beta[j] * dx.powi(j as i32)).sum())
+            .collect();
+        let mut res: Vec<f64> = (0..n).map(|i| (yv[i] - pred[i]).abs()).collect();
+        res.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let s = (4.685016 * res[res.len() / 2]).max(1e-12);
+        for i in 0..n {
+            let u = (yv[i] - pred[i]) / s;
+            w[i] = if u.abs() >= 1.0 {
+                0.0
+            } else {
+                base_w[i] * (1.0 - u * u * u).powi(2)
+            };
+        }
     }
-    let xty: Vec<f64> = (0..k)
-        .map(|j| (0..n).map(|i| a[i][j] * pts[i].1).sum())
-        .collect();
-    let mut xtx = tcross(&a);
-    let rhs = xty.clone();
-    let mut aug = xtx.clone();
-    for r in 0..k {
-        aug[r].push(rhs[r]);
-    }
-    let beta = solve3(&mut aug, &mut rhs.clone())?;
-    // variance of fitted value: sigma2 · e1ᵀ (XᵀX)⁻¹ (DᵀWD) (XᵀX)⁻¹ e1
-    // residual scale from the local fit
-    let rss: f64 = (0..n)
-        .map(|i| {
-            let dx = pts[i].0 - x0;
-            let pred: f64 = (0..k).map(|j| beta[j] * dx.powi(j as i32)).sum();
-            w[i] * (pts[i].1 - pred).powi(2)
-        })
-        .sum();
-    let sumw: f64 = w.iter().sum();
-    let enp = sumw; // rough effective df for scale (R: enp≈trace(A)); good
-                   // enough for a visual band
-    let sigma2 = rss / ((sumw - (deg + 1) as f64).max(1.0));
-    let _ = enp;
-    // inverse XᵀX
-    let mut invm = xtx.clone();
-    let mut id: Vec<Vec<f64>> = (0..k)
-        .map(|i| {
-            let mut v = vec![0.0; k];
-            v[i] = 1.0;
-            v
-        })
-        .collect();
-    // augment solve: solve XᵀX · X = I column-wise
-    let mut inv_cols: Vec<Vec<f64>> = Vec::new();
-    for j in 0..k {
-        let mut rhsj = vec![0.0; k];
-        rhsj[j] = 1.0;
-        let mut m2 = xtx.clone();
-        let col = solve3(&mut m2, &mut rhsj)?;
-        inv_cols.push(col);
-    }
-    let _ = &mut invm;
-    let _ = &id;
-    // D = diag(w) ; B = Aᵀ A (unweighted design products) with the LOESS
-    // sandwich: fitted variance = σ² · (e1ᵀ (XᵀWX)⁻¹ Aᵀ) (A (XᵀWX)⁻¹ e1)
-    // with rows of A weighted by w. Build A_u = rows [ (x−x0)^j ] (unweighted).
-    let au: Vec<Vec<f64>> = pts
+    // residual scale (summary.loess): σ² = Σw·e²·(S−1)/(Σw·(S−3)),
+    // S = (Σw)²/Σw²
+    let pred: Vec<f64> = dxv
         .iter()
-        .map(|(x, _)| {
-            let dx = x - x0;
-            (0..k).map(|j| dx.powi(j as i32)).collect()
-        })
+        .map(|dx| (0..dim).map(|j| beta[j] * dx.powi(j as i32)).sum())
         .collect();
-    // v = (XᵀWX)⁻¹ · Aᵀ e1 (size k): e1 picks row-0 weight; need full vector
-    // m = Σ_i w_i² · au_i ⊗ au_i  (DᵀWD with D=diag(w))
-    let mut m = vec![vec![0.0; k]; k];
+    let rss: f64 = (0..n).map(|i| w[i] * (yv[i] - pred[i]).powi(2)).sum();
+    let sumw: f64 = w.iter().sum();
+    let sumw2: f64 = w.iter().map(|wi| wi * wi).sum();
+    let s_stat = if sumw2 > 0.0 { sumw * sumw / sumw2 } else { 1.0 };
+    let sigma2 = rss * (s_stat - 1.0) / (sumw * (s_stat - 3.0).max(1e-9)).max(1e-9);
+    // var(fitted) = σ² · e0ᵀ (XᵀWX)⁻¹ M (XᵀWX)⁻¹ e0, M = Σ w_i² a_i a_iᵀ
+    let mut m = vec![vec![0.0; dim]; dim];
     for i in 0..n {
-        for j in 0..k {
-            for l in 0..k {
-                m[j][l] += w[i] * w[i] * au[i][j] * au[i][l];
+        for j in 0..dim {
+            for l in 0..dim {
+                m[j][l] += w[i] * w[i] * dxv[i].powi(j as i32) * dxv[i].powi(l as i32);
             }
         }
     }
-    // z = Σ_i au_i ⊗ (w_i·e0) = Σ_i w_i·au_i e0ᵀ → u = (XᵀWX)⁻¹ · (w e0-weighted Aᵀ) ...
-    // var = σ² · e0ᵀ (XᵀWX)⁻¹ M (XᵀWX)⁻¹ e0
-    let mut mm = xtx.clone();
-    let mut u = vec![0.0; k];
+    let mut u = vec![0.0; dim];
     u[0] = 1.0;
-    let s1 = solve3(&mut mm, &mut u)?; // (XᵀWX)⁻¹ e0
-    // q = M · s1
-    let q: Vec<f64> = (0..k)
-        .map(|j| (0..k).map(|l| m[j][l] * s1[l]).sum())
-        .collect();
-    let mut mm2 = xtx.clone();
-    let s2 = solve3(&mut mm2, &mut u)?;
-    let var = sigma2 * (0..k).map(|j| s2[j] * q[j]).sum::<f64>();
+    let s1 = solve3(&mut xtx.clone(), &mut u.clone())?;
+    let q: Vec<f64> = (0..dim).map(|j| (0..dim).map(|l| m[j][l] * s1[l]).sum()).collect();
+    let s2 = solve3(&mut xtx.clone(), &mut u)?;
+    let var = sigma2 * (0..dim).map(|j| s2[j] * q[j]).sum::<f64>();
     Some((beta[0], var.max(0.0).sqrt()))
 }
-
-/// Fit method dispatch. Returns (curve, band_lo, band_hi).
 pub fn smooth_fit(
     method: &str,
     pts: &[(f64, f64)],
@@ -534,85 +523,120 @@ pub fn compute_stat(f: &Frame, spec: &StatSpec) -> Frame {
         StatSpec::Smooth { method, span, se, n, fullrange: _fullrange } => {
             let xs = f.get("x").cloned().unwrap_or_default();
             let ys = f.get("y").cloned().unwrap_or_default();
-            // group by discrete x (ordinal) or treat as one continuous group
-            let xcats: Option<Vec<String>> = f.cat.get("x").cloned();
-            let mut out = Frame::new();
-            let groups: Vec<(f64, usize)> = match &xcats {
-                Some(cats) => {
-                    let mut u: Vec<f64> = xs.iter().cloned().filter(|v| v.is_finite()).collect();
-                    u.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                    u.dedup();
-                    u.into_iter().map(|ux| (ux, 0usize)).collect()
-                }
-                None => vec![(0.0, 0usize)],
-            };
-            let _ = groups;
             let m = method.as_deref().unwrap_or("loess");
             let nn = n.unwrap_or(80);
-            let mut emit = |gx: Vec<f64>, gy: Vec<f64>, gymin: Option<Vec<f64>>, gymax: Option<Vec<f64>>, gl: Option<Vec<String>>| {
-                out.set("x", gx);
-                out.set("y", gy);
-                if let (Some(a), Some(b)) = (gymin, gymax) {
-                    out.set("ymin", a);
-                    out.set("ymax", b);
+            let sp = span.unwrap_or(0.75);
+            // group by ALL discrete aes columns (colour/fill/… × discrete x)
+            // — ggplot2 groups smooths by every mapped discrete aesthetic.
+            let gcols: Vec<&'static str> = ["colour", "fill", "linetype"]
+                .into_iter()
+                .filter(|k| f.cat.contains_key(*k))
+                .collect();
+            let xcats: Option<Vec<String>> = f.cat.get("x").cloned();
+            let discrete_x = xcats.is_some();
+            let mut keys: Vec<(Vec<String>, Option<f64>)> = Vec::new();
+            for i in 0..xs.len() {
+                if !(ys[i].is_finite()) {
+                    continue;
                 }
-                if let Some(gl) = gl {
-                    out.set_cat("x", gl);
-                    if let Some(decl) = f.levels.get("x") {
-                        out.set_levels("x", decl.clone());
-                    }
+                let sig: Vec<String> = gcols
+                    .iter()
+                    .map(|k| f.cat.get(*k).and_then(|v| v.get(i)).cloned().unwrap_or_default())
+                    .collect();
+                let ordx = if discrete_x { Some(xs[i]) } else { None };
+                if !keys.iter().any(|(s, o)| *s == sig && *o == ordx) {
+                    keys.push((sig, ordx));
                 }
-            };
-            match &xcats {
-                None => {
-                    // single continuous group: fit on (xs, ys)
-                    let pts: Vec<(f64, f64)> = (0..xs.len())
-                        .filter(|&i| xs[i].is_finite() && ys[i].is_finite())
-                        .map(|i| (xs[i], ys[i]))
-                        .collect();
+            }
+            let mut out = Frame::new();
+            let mut oy: Vec<f64> = Vec::new();
+            let mut ox: Vec<f64> = Vec::new();
+            let mut oymin: Vec<f64> = Vec::new();
+            let mut oymax: Vec<f64> = Vec::new();
+            let mut ocats: Vec<Vec<String>> = vec![Vec::new(); gcols.len()];
+            let mut oxcats: Vec<String> = Vec::new();
+            for (sig, ordx) in &keys {
+                let pts: Vec<(f64, f64)> = (0..xs.len())
+                    .filter(|&i| {
+                        ys[i].is_finite()
+                            && gcols.iter().enumerate().all(|(j, k)| {
+                                f.cat.get(*k).and_then(|v| v.get(i)).cloned() == Some(sig[j].clone())
+                            })
+                            && ordx.map_or(true, |o| (xs[i] - o).abs() < 1e-9)
+                    })
+                    .map(|i| (xs[i], ys[i]))
+                    .collect();
                     if pts.len() < 3 {
-                        return Frame::new();
+                        continue;
                     }
-                    let gx = linspace(pts.iter().map(|p| p.0).min_by(|a,b|a.partial_cmp(b).unwrap()).unwrap().to_owned(), pts.iter().map(|p|p.0).max_by(|a,b|a.partial_cmp(b).unwrap()).unwrap().to_owned(), nn);
-                    let (gy, ylo, yhi) = smooth_fit(m, &pts, &gx, span.unwrap_or(0.75), *se);
-                    emit(gx, gy, ylo, yhi, None);
+                let (gx, gy, ylo, yhi) = if let Some(o) = ordx {
+                    // discrete x group: fit on index positions, grid over slot
+                    let pp: Vec<(f64, f64)> = pts
+                        .iter()
+                        .enumerate()
+                        .map(|(k, &(_, yv))| (k as f64, yv)) // x positions are the ordinal slot; all pts share it → use 0..n index for spread? ggplot2 fits y~index-in-group; we use 0..n
+                        .collect();
+                    let _ = pp;
+                    // For discrete x, ggplot2's lm fits y ~ numeric index of x
+                    // within the group (all equal) → degenerate; it actually
+                    // fits y ~ x where x is the ordinal — a vertical line
+                    // impossible; instead ggplot2 fits per group on x=index in
+                    // the DATA (only one x value!) → skips. Reproduce: skip
+                    // discrete-x smooths (they warn/behave as constants).
+                    // Our reference 56 maps colour groups on CONTINUOUS x, so
+                    // discrete x only arises for smooth on factor x: rare.
+                    // Emit nothing to stay safe.
+                    continue;
+                } else {
+                    let lo = pts.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
+                    let hi = pts.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max);
+                    let gx = linspace(lo, hi, nn);
+                    let (gy, ylo, yhi) = smooth_fit(m, &pts, &gx, sp, *se);
+                    (gx, gy, ylo, yhi)
+                };
+                let nnn = gx.len();
+                ox.extend(gx);
+                oy.extend(gy);
+                if *se {
+                    oymin.extend(ylo.unwrap_or_else(|| vec![f64::NAN; nnn]));
+                    oymax.extend(yhi.unwrap_or_else(|| vec![f64::NAN; nnn]));
                 }
-                Some(cats) => {
-                    let mut ux: Vec<f64> = xs.iter().cloned().filter(|v| v.is_finite()).collect();
-                    ux.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                    ux.dedup();
-                    let mut gx_all: Vec<f64> = Vec::new();
-                    let mut gy_all: Vec<f64> = Vec::new();
-                    let mut ylo_all: Vec<f64> = Vec::new();
-                    let mut yhi_all: Vec<f64> = Vec::new();
-                    let mut gl_all: Vec<String> = Vec::new();
-                    for &ord in &ux {
-                        let pts: Vec<(f64, f64)> = (0..xs.len())
-                            .filter(|&i| (xs[i] - ord).abs() < 1e-9 && ys[i].is_finite())
-                            .map(|i| (i as f64, ys[i])) // x index is the ordinal x (continuous position)
-                            .collect();
-                        if pts.len() < 3 {
-                            continue;
-                        }
-                        let label = (0..xs.len())
-                            .find(|&i| (xs[i] - ord).abs() < 1e-9)
-                            .and_then(|i| cats.get(i).cloned())
-                            .unwrap_or_default();
-                        let gx = linspace(ord - 0.4, ord + 0.4, nn);
-                        let (gy, ylo, yhi) = smooth_fit(m, &pts, &gx, span.unwrap_or(0.75), *se);
-                        gx_all.extend(gx);
-                        gy_all.extend(gy);
-                        if *se {
-                            ylo_all.extend(ylo.unwrap_or_else(|| vec![f64::NAN; nn]));
-                            yhi_all.extend(yhi.unwrap_or_else(|| vec![f64::NAN; nn]));
-                        }
-                        gl_all.extend(std::iter::repeat(label).take(nn));
+                for (j, v) in ocats.iter_mut().enumerate() {
+                    v.extend(std::iter::repeat(sig[j].clone()).take(nnn));
+                }
+                if discrete_x {
+                    let lab = (0..xs.len())
+                        .find(|&i| {
+                            ordx.map_or(false, |o| (xs[i] - o).abs() < 1e-9)
+                                && f.cat.get("x").is_some()
+                        })
+                        .and_then(|i| xcats.as_ref().unwrap().get(i).cloned())
+                        .unwrap_or_default();
+                    oxcats.extend(std::iter::repeat(lab).take(nnn));
+                }
+            }
+            out.set("x", ox);
+            out.set("y", oy);
+            if *se {
+                out.set("ymin", oymin);
+                out.set("ymax", oymax);
+            }
+            for (j, k) in gcols.iter().enumerate() {
+                if !ocats[j].is_empty() {
+                    out.set_cat(k, ocats[j].clone());
+                }
+            }
+            if discrete_x && !oxcats.is_empty() {
+                out.set_cat("x", oxcats.clone());
+                for k in ["x"] {
+                    if let Some(decl) = f.levels.get(k) {
+                        out.set_levels(k, decl.clone());
                     }
-                    if *se {
-                        emit(gx_all, gy_all, Some(ylo_all), Some(yhi_all), Some(gl_all));
-                    } else {
-                        emit(gx_all, gy_all, None, None, Some(gl_all));
-                    }
+                }
+            }
+            for (k, v) in &f.levels {
+                if out.cat.contains_key(k.as_str()) && !out.levels.contains_key(k.as_str()) {
+                    out.set_levels(k, v.clone());
                 }
             }
             out

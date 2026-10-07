@@ -51,3 +51,6 @@
 51_brewer 0.40%
 52_viridis 0.41%
 53_greypal 0.18%
+54_lm 0.65%
+55_loess 2.82%
+56_lm_nogroup 0.72%

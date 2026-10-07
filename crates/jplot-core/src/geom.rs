@@ -51,67 +51,61 @@ fn draw_smooth(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &Buil
     let ys = g.get("y").cloned().unwrap_or_default();
     let ylo = g.get("ymin").cloned();
     let yhi = g.get("ymax").cloned();
-    // ribbon first (under the line) when present
-    if let (Some(a), Some(b)) = (ylo.clone(), yhi.clone()) {
-        let n = xs.len().min(ys.len()).min(a.len()).min(b.len());
-        let mut poly: Vec<(f64, f64)> = Vec::with_capacity(2 * n);
-        for i in 0..n {
-            if !(xs[i].is_finite() && a[i].is_finite()) {
-                continue;
-            }
-            poly.push((vp.map_x(&bp.x_scale, xs[i]), vp.map_y(&bp.y_scale, a[i])));
-        }
-        for i in (0..n).rev() {
-            if !(xs[i].is_finite() && b[i].is_finite()) {
-                continue;
-            }
-            poly.push((vp.map_x(&bp.x_scale, xs[i]), vp.map_y(&bp.y_scale, b[i])));
-        }
-        if poly.len() >= 3 {
-            let band = l.args.colour_(&["band.colour", "band.color"]).unwrap_or(Color::transparent());
-            ops.push(Primitive::Polyline {
-                points: poly,
-                stroke: if band.a > 0.0 { Some(Line::solid(band, geom_lw(0.5))) } else { None },
-                fill: Some(Paint::new(Color::rgb(153, 153, 153).with_alpha(l.args.f64_("alpha").unwrap_or(0.4)))),
-                closed: true,
-            });
+    let n = xs.len().min(ys.len());
+    // split rows into per-group runs using the layer group ids (ggplot2
+    // groups smooths by every mapped discrete aesthetic — colour/fill/…)
+    let mut runs: Vec<usize> = Vec::new(); // per-row group id (row order)
+    for i in 0..n {
+        let gid = l.group_ids.get(i).copied().unwrap_or(0);
+        runs.push(gid);
+    }
+    // group indices preserving order
+    let mut gorder: Vec<usize> = Vec::new();
+    for r in &runs {
+        if !gorder.contains(r) {
+            gorder.push(*r);
         }
     }
-    // line: grouped by x label (discrete) or one polyline per label-change
-    let cats = g.cat.get("x").cloned();
-    let n = xs.len().min(ys.len());
-    match cats {
-        Some(c) if !c.is_empty() => {
-            let mut groups: Vec<(String, Vec<(f64, f64)>)> = Vec::new();
-            for i in 0..n {
-                if !(xs[i].is_finite() && ys[i].is_finite()) {
+    let rows_of = |gid: usize| -> Vec<usize> {
+        (0..n).filter(|&i| runs[i] == gid).collect()
+    };
+    // ribbons first (under lines), per group
+    if let (Some(a), Some(b)) = (ylo.clone(), yhi.clone()) {
+        for &gid in &gorder {
+            let idx = rows_of(gid);
+            let mut poly: Vec<(f64, f64)> = Vec::with_capacity(2 * idx.len());
+            for &i in &idx {
+                if !(xs[i].is_finite() && a[i].is_finite()) {
                     continue;
                 }
-                let lab = c.get(i).cloned().unwrap_or_default();
-                match groups.iter_mut().find(|(k, _)| *k == lab) {
-                    Some((_, v)) => v.push((xs[i], ys[i])),
-                    None => groups.push((lab, vec![(xs[i], ys[i])])),
+                poly.push((vp.map_x(&bp.x_scale, xs[i]), vp.map_y(&bp.y_scale, a[i])));
+            }
+            for &i in idx.iter().rev() {
+                if !(xs[i].is_finite() && b[i].is_finite()) {
+                    continue;
                 }
+                poly.push((vp.map_x(&bp.x_scale, xs[i]), vp.map_y(&bp.y_scale, b[i])));
             }
-            for (gi, (_, pts)) in groups.iter().enumerate() {
-                let mut p: Vec<(f64, f64)> = pts
-                    .iter()
-                    .map(|(x, y)| (vp.map_x(&bp.x_scale, *x), vp.map_y(&bp.y_scale, *y)))
-                    .collect();
-                p.sort_by_key(|(x, _)| (*x * 1e6).round() as i64);
-                push_smooth_line(ops, l, bp, &mut p, gi);
-            }
-        }
-        _ => {
-            let mut p: Vec<(f64, f64)> = (0..n)
-                .filter(|&i| xs[i].is_finite() && ys[i].is_finite())
-                .map(|i| (vp.map_x(&bp.x_scale, xs[i]), vp.map_y(&bp.y_scale, ys[i])))
-                .collect();
-            p.sort_by_key(|(x, _)| (*x * 1e6).round() as i64);
-            if p.len() >= 2 {
-                push_smooth_line(ops, l, bp, &mut p, 0);
+            if poly.len() >= 3 {
+                let band = l.args.colour_(&["band.colour", "band.color"]).unwrap_or(Color::transparent());
+                ops.push(Primitive::Polyline {
+                    points: poly,
+                    stroke: if band.a > 0.0 { Some(Line::solid(band, geom_lw(0.5))) } else { None },
+                    fill: Some(Paint::new(Color::rgb(153, 153, 153).with_alpha(l.args.f64_("alpha").unwrap_or(0.4)))),
+                    closed: true,
+                });
             }
         }
+    }
+    // fitted line per group
+    for (gi, &gid) in gorder.iter().enumerate() {
+        let mut p: Vec<(f64, f64)> = rows_of(gid)
+            .into_iter()
+            .filter(|&i| xs[i].is_finite() && ys[i].is_finite())
+            .map(|i| (vp.map_x(&bp.x_scale, xs[i]), vp.map_y(&bp.y_scale, ys[i])))
+            .collect();
+        p.sort_by_key(|(x, _)| (*x * 1e6).round() as i64);
+        push_smooth_line(ops, l, bp, &mut p, gi);
     }
 }
 
