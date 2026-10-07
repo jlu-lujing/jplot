@@ -13,12 +13,12 @@ use std::collections::HashMap;
 use crate::data::{Column, Range};
 use crate::error::JplotError;
 use crate::position::{apply_position, group_cols, group_ids, order_levels};
-use crate::stat::{compute_stat, default_bins, quantile7};
+use crate::stat::compute_stat;
 use crate::scale::{
-    column_is_discrete, extended_breaks, hcl_to_rgb, ContinuousScale, DiscreteColourScale,
+    column_is_discrete, hcl_to_rgb, ContinuousScale, DiscreteColourScale,
     DiscreteScale,
 };
-use crate::spec::{AesSpec, GeomArgs, GeomSpec, LayerSpec, PlotSpec, PositionSpec, StatSpec};
+use crate::spec::{AesSpec, GeomArgs, GeomSpec, LayerSpec, PlotSpec, StatSpec};
 pub use crate::data::Dataset;
 
 /// A resolved numeric/categorical table for one layer after stats.
@@ -133,7 +133,7 @@ pub struct BuiltLayer {
     pub group_ids: Vec<usize>,
 }
 
-fn column_from_spec(ds: &Dataset, name: &str, args: &GeomArgs, aes_col: Option<&String>) -> Option<Column> {
+fn column_from_spec(ds: &Dataset, _name: &str, args: &GeomArgs, aes_col: Option<&String>) -> Option<Column> {
     if let Some(c) = aes_col {
         if let Some(col) = ds.get(c) {
             return Some(col.clone());
@@ -328,10 +328,10 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
     // 2. train scales. Discrete wins if ANY layer uses categorical for that aes
     //    (ggplot2: the first scale for the aesthetic determines it; discrete
     //    bars require discrete x even if another layer is continuous).
-    let mut x_scale = None;
-    let mut y_scale = None;
-    let mut colour_scale = None;
-    let mut fill_scale = None;
+    let x_scale;
+    let y_scale;
+    let colour_scale;
+    let fill_scale;
 
     let train = |name: &str| -> Option<BuiltScale> {
         // aes -> frame column names to scan (boxplot emits ylower/…/outlier_y)
@@ -584,7 +584,7 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
         }
     }
     {
-        let mut materialise = |frames: &mut Vec<Frame>| {
+        let materialise = |frames: &mut Vec<Frame>| {
             for (f, amap) in frames.iter_mut().zip(aes_map.iter()) {
                 for (aes, scale) in
                     [("size", size_scale.as_ref()), ("alpha", alpha_scale.as_ref())]
@@ -730,6 +730,8 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::spec::PositionSpec;
+    use crate::stat::quantile7;
     use crate::data::Column;
     use crate::spec::{aes, geom_bar, geom_col, geom_histogram, geom_point, ggplot};
 

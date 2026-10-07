@@ -6,7 +6,7 @@
 use crate::build::{BuiltPlot, BuiltScale};
 use crate::probes;
 use crate::scale::Color;
-use crate::scene::{layer, Line, Paint, Primitive, Scene, TextAlign, TextStyle};
+use crate::scene::{Line, Paint, Primitive, TextAlign, TextStyle};
 use crate::text::measure;
 use crate::theme::geom_defaults::{self, geom_lw, point_r_px, point_stroke};
 
@@ -99,7 +99,7 @@ fn has_stroke(l: &crate::build::BuiltLayer) -> bool {
 
 fn draw_tile(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
     let g = &l.frame;
-    let (xs, ys) = (g.get("x").cloned().unwrap_or_default(), g.get("y").cloned().unwrap_or_default());
+    let (_xs, _ys) = (g.get("x").cloned().unwrap_or_default(), g.get("y").cloned().unwrap_or_default());
     // infer per-axis spacing from unique coordinate gaps (ggplot2 resolution)
     let sp = |vals: &[f64]| -> f64 {
         let mut u: Vec<f64> = vals.iter().cloned().filter(|v| v.is_finite()).collect();
@@ -504,15 +504,6 @@ fn fill_colour_of(l: &crate::build::BuiltLayer, i: usize, bp: &BuiltPlot) -> Col
     }
     // ggplot2 geom_bar default fill = col_mix(ink, paper, 0.35) ≈ 0.35 grey
     Color::rgb(89, 89, 89).with_alpha(alpha)
-}
-
-fn gradient_color(v: f64, all: &[f64], alpha: f64) -> Color {
-    let lo = all.iter().cloned().fold(f64::INFINITY, f64::min);
-    let hi = all.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-    let t = if hi == lo { 0.5 } else { ((v - lo) / (hi - lo)).clamp(0.0, 1.0) };
-    // ggplot2 4.x default continuous colour: Lab-space gradient
-    // #132B43 -> #56B1F7 (scales::pal_grad, probe-verified at 5 stops)
-    crate::scale::lab_ramp("#132B43", "#56B1F7", t).with_alpha(alpha)
 }
 
 /// data range of a built scale (for abline span)

@@ -1,10 +1,8 @@
 //! Stat layer: binning (ggplot2 `bin.R` port) and per-layer stat
 //! computations (count / bin / boxplot).
 
-use std::collections::HashMap;
 
 use crate::data::Range;
-use crate::scale::extended_breaks;
 use crate::spec::StatSpec;
 
 use crate::build::Frame;
@@ -23,6 +21,7 @@ pub fn quantile7(sorted: &[f64], p: f64) -> f64 {
     sorted[lo] + (h - lo as f64) * (sorted[hi] - sorted[lo])
 }
 
+#[allow(dead_code)] // bin_breaks_width path (R bin.R) kept for binwidth parity work
 /// fullseq: `seq(floor(min/size)*size, ceil(max/size)*size, size)`
 fn fullseq(min: f64, max: f64, size: f64) -> Vec<f64> {
     let start = (min / size).floor() * size;
@@ -190,7 +189,7 @@ pub fn compute_stat(f: &Frame, spec: &StatSpec) -> Frame {
         }
         StatSpec::Boxplot { coef } => {
             let coef = coef.unwrap_or(1.5);
-            let xs = f.get("x").cloned().unwrap_or_default();
+            let _xs = f.get("x").cloned().unwrap_or_default();
             let ys = f.get("y").cloned().unwrap_or_default();
             // group by x label (discrete) or single group
             let xlabels: Option<&Vec<String>> = f.cat.get("x");

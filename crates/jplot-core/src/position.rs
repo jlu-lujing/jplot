@@ -67,7 +67,7 @@ pub fn group_ids(
     if groups.iter().all(|g| level_order.contains_key(*g)) {
         let rank = |k: &Vec<String>| -> Vec<usize> {
             k.iter()
-                .map(|v| groups.iter().enumerate().find_map(|(gi, g)| {
+                .map(|v| groups.iter().enumerate().find_map(|(_gi, g)| {
                     if f.cat[*g][0] == *v || f.cat[*g].contains(v) {
                         level_order[*g].iter().position(|l| l == v)
                     } else {

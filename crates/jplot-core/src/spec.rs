@@ -171,7 +171,7 @@ impl Serialize for GeomArgs {
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum GeomArgsHelper {
-    Seq(Vec<serde_json::Value>),
+    Seq(#[allow(dead_code)] Vec<serde_json::Value>),
     Map(HashMap<String, serde_json::Value>),
 }
 

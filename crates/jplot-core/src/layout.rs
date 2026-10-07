@@ -10,10 +10,10 @@ pub use crate::geom;
 pub use crate::guides;
 use crate::scene::{layer, Line, Paint, Primitive, Scene, TextAlign, TextStyle};
 use crate::scale::Color;
-use crate::text::{left_edge, measure};
+use crate::text::measure;
 use crate::probes;
-use crate::theme::{geom_defaults, Theme};
-use crate::theme::geom_defaults::{geom_lw, point_r_px, point_stroke, theme_lw};
+use crate::theme::Theme;
+use crate::theme::geom_defaults::{geom_lw, theme_lw};
 
 pub struct Viewport {
     pub x0: f64,
@@ -103,7 +103,6 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
         top += probes::gutter::SUBTITLE_H;
     }
     let mut right = probes::gutter::PLOT_MARGIN;
-    let legend_width;
     let guides: Vec<guides::Guide> = guides::build_guides(bp, &label_style);
     {
         if !guides.is_empty() {
@@ -122,11 +121,9 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
                         + probes::legend::TITLE_GAP
                 })
                 .fold(0.0f64, f64::max);
-            legend_width =
+            let legend_width =
                 probes::legend::KEY_W + probes::legend::LABEL_GAP + maxlabel + probes::legend::BLOCK_PAD;
             right += legend_width.max(title_gap) + probes::legend::RIGHT_EDGE;
-        } else {
-            legend_width = 0.0;
         }
     }
     let _ = tick;
@@ -191,7 +188,7 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
         // text-anchor:middle); svglite baselines:
         //   x-label = y1 + tick + 2.42 + ascent ; y-label = break + 0.31 + ascent
         //   x-title = 472.20 (fixed), y-title centred translate(13.36, mid)
-        let mut push_label = |s: &mut Scene, content: &str, cx: f64, baseline: f64, st: TextStyle| {
+        let push_label = |s: &mut Scene, content: &str, cx: f64, baseline: f64, st: TextStyle| {
             s.layer(layer::AXES).push(Primitive::Text { content: content.into(), x: cx, y: baseline, style: st });
         };
         for (&b, lab) in x_breaks.iter().zip(x_labels.iter()) {
@@ -273,18 +270,6 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
     sc
 }
 
-fn s_axis_tick(s: &mut Scene, pos: f64, along1: f64, along2: f64, al: Line) {
-    // x-axis: constant x (along = y); y-axis: constant y (along = x)
-    // detect by whether along1/along2 differ in the axis-perpendicular way —
-    // callers pass (vp.y1, x, y1+tick) for x-ticks and (y, x0-tick, y) for y.
-    // We are told via argument order: (s, pos, from, to, line). pos is the
-    // fixed coordinate, [from,to] the extent. But which axis? encode via a
-    // sentinel: x-ticks pass pos==y1 (a y), y-ticks pass pos==y (a y) too.
-    // Simplify: caller distinguishes by which pair is horizontal vs vertical;
-    // here the "fixed" coord is `pos`, and the segment runs perpendicular.
-    // To keep the signature unambiguous, callers pass explicit endpoints.
-    let _ = (pos, along1, along2, al, s);
-}
 
 fn axis_breaks(s: &BuiltScale) -> (Vec<f64>, Vec<String>) {
     match s {

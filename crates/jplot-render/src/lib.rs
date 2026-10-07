@@ -4,7 +4,6 @@
 
 use jplot_core::scene::{Layer, Primitive, Scene, TextAlign};
 use jplot_core::scale::Color;
-use jplot_core::text::{measure, TextMetrics};
 
 const FONT_STACK: &str = "Arial, Helvetica, sans-serif";
 
@@ -57,9 +56,7 @@ fn trim(v: f64) -> String {
 }
 
 /// Baseline y for text whose (x=left edge, y=vertical centre) anchor.
-fn baseline_y(y: f64, m: &TextMetrics) -> f64 {
-    y + (m.ascent - m.descent) / 2.0
-}
+
 
 pub fn to_svg(scene: &Scene) -> String {
     let mut o = String::new();

@@ -72,7 +72,7 @@ pub fn extended_breaks(dmin: f64, dmax: f64, m: usize) -> Vec<f64> {
     let qset = &Q_DEFAULT[..];
     let w = &W_DEFAULT[..];
 
-    let (mut dmin, mut dmax) = (dmin.min(dmax), dmin.max(dmax));
+    let (dmin, dmax) = (dmin.min(dmax), dmin.max(dmax));
 
     if dmax - dmin < EPS {
         return linspace(dmin, dmax, m as usize);
@@ -89,8 +89,7 @@ pub fn extended_breaks(dmin: f64, dmax: f64, m: usize) -> Vec<f64> {
         for &q in qset {
             let sm = simplicity_max(q, qset, j);
             if w[0] * sm + w[1] + w[2] + w[3] < best_score {
-                j = f64::INFINITY;
-                break 'outer;
+                break 'outer; // j <- Inf in R: loop ends immediately
             }
             let mut k: f64 = 2.0;
             while k < f64::INFINITY {

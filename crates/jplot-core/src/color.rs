@@ -3,7 +3,6 @@
 //! and scales::pal_grad / hue_pal / grey_pal — probe-verified against
 //! ggplot2 4.0.3 (#F8766D hue first colour, #132B43→#56B1F7 Lab midpoints).
 
-use serde::Deserialize;
 // ---------------------------------------------------------------------------
 // Colours
 // ---------------------------------------------------------------------------
