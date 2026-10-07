@@ -32,6 +32,22 @@ impl Viewport {
     pub fn map_y(&self, s: &BuiltScale, v: f64) -> f64 {
         self.y1 - Self::t_x(s, v) * (self.y1 - self.y0)
     }
+    /// Derived geometry (errorbar caps, area/ribbon corners, bar edges):
+    /// no oob censor — these may extend past the panel and are clipped by it.
+    pub fn map_x_plain(&self, s: &BuiltScale, v: f64) -> f64 {
+        let t = match s {
+            BuiltScale::Continuous(cs) => cs.map_plain(v),
+            BuiltScale::Discrete(ds) => (v - ds.range.min) / (ds.range.max - ds.range.min),
+        };
+        self.x0 + t * (self.x1 - self.x0)
+    }
+    pub fn map_y_plain(&self, s: &BuiltScale, v: f64) -> f64 {
+        let t = match s {
+            BuiltScale::Continuous(cs) => cs.map_plain(v),
+            BuiltScale::Discrete(ds) => (v - ds.range.min) / (ds.range.max - ds.range.min),
+        };
+        self.y1 - t * (self.y1 - self.y0)
+    }
 }
 
 /// One legend key glyph: the mark drawn next to a level label, mirroring
@@ -567,7 +583,8 @@ fn draw_hline(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &Built
         if !y.is_finite() {
             continue;
         }
-        let py = vp.map_y(&bp.y_scale, y);
+        // constant lines span the panel regardless of y_scale censoring
+        let py = vp.map_y_plain(&bp.y_scale, y);
         let c = point_colour_of(l, i.min(n - 1), bp);
         ops.push(Primitive::Segment { x1: vp.x0, y1: py, x2: vp.x1, y2: py, stroke: Line::solid(c, width_px) });
     }
@@ -586,7 +603,8 @@ fn draw_vline(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &Built
         if !x.is_finite() {
             continue;
         }
-        let px = vp.map_x(&bp.x_scale, x);
+        // constant lines span the panel regardless of x_scale censoring
+        let px = vp.map_x_plain(&bp.x_scale, x);
         let c = point_colour_of(l, i.min(n - 1), bp);
         ops.push(Primitive::Segment { x1: px, y1: vp.y0, x2: px, y2: vp.y1, stroke: Line::solid(c, width_px) });
     }

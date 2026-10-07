@@ -850,9 +850,19 @@ impl ContinuousScale {
         }
     }
 
+    /// Mapped data value → normalised [0,1], applying oob (censor → NaN so the
+    /// row is dropped, like ggplot2's "Removed N rows" for explicit limits).
     pub fn map(&self, v: f64) -> f64 {
         let t = self.transform.transform(v);
         let t = self.oob.apply(t, self.t_range.min, self.t_range.max);
+        (t - self.t_range.min) / (self.t_range.max - self.t_range.min)
+    }
+
+    /// Derived-geometry mapping (errorbar caps, area corners): pure rescale,
+    /// NO censor — these extend past the panel and are clipped by it, so they
+    /// must not be nulled at the range edge.
+    pub fn map_plain(&self, v: f64) -> f64 {
+        let t = self.transform.transform(v);
         (t - self.t_range.min) / (self.t_range.max - self.t_range.min)
     }
 
