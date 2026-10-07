@@ -360,8 +360,8 @@ fn draw_points(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &Buil
             continue;
         }
         let c = point_colour_of(l, i, bp);
-        // ggplot2 default shape 19: solid filled; svglite still emits a
-        // same-colour stroke (stroke-width 0.71 for the default stroke 0.5).
+        // ggplot2 default shape 19: solid fill; svglite inherits the global
+        // circle stroke (width 0.71) in the fill colour → r+0.355 visual radius.
         ops.push(Primitive::Circle {
             cx: vp.map_x(&bp.x_scale, xs[i]),
             cy: vp.map_y(&bp.y_scale, ys[i]),
@@ -373,7 +373,7 @@ fn draw_points(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &Buil
 }
 
 fn draw_lines(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
-    let width_px = l.args.f64_("linewidth").unwrap_or(geom_lw(0.5));
+    let width_px = l.args.f64_("linewidth").map(geom_lw).unwrap_or(geom_lw(0.5));
     let (xs, ys) = (l.frame.get("x").cloned().unwrap_or_default(), l.frame.get("y").cloned().unwrap_or_default());
     let n_groups = l.group_ids.iter().cloned().max().map_or(0, |m| m + 1);
     for g in 0..n_groups.max(1) {
@@ -431,7 +431,8 @@ fn draw_bars(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltP
             h: (yb - ya).abs(),
             fill: Some(Paint::new(c)),
             stroke: if has_outline {
-                Some(Line::solid(point_colour_of(l, i, bp), point_stroke(0.5)))
+                let blw = l.args.f64_("linewidth").map(geom_lw).unwrap_or(geom_lw(0.5));
+                Some(Line::solid(point_colour_of(l, i, bp), blw))
             } else {
                 None
             },
@@ -453,16 +454,18 @@ fn draw_boxplot(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &Bui
     //   outliers: shape 19, size = pointsize, stroke 0.5, fill NA
     //   staplewidth = 0 → NO whisker caps drawn
     //   notch = FALSE, notchwidth = 0.5 ; varwidth handled in build()
+    // user-supplied *linewidth values are in MILLIMETRES (ggplot2 semantics)
+    // and must go through geom_lw(); the 0.5 default is already a nominal mm.
     let base_colour = Color::rgb(51, 51, 51);
-    let lw = a.f64_("linewidth").unwrap_or(geom_lw(0.5));
+    let lw = a.f64_("linewidth").map(geom_lw).unwrap_or(geom_lw(0.5));
     let box_colour = a.colour_(&["box.colour", "box.color"]).unwrap_or(base_colour);
-    let box_lw = a.f64_("box.linewidth").unwrap_or(lw);
+    let box_lw = a.f64_("box.linewidth").map(geom_lw).unwrap_or(lw);
     let whisker_colour = a.colour_(&["whisker.colour", "whisker.color"]).unwrap_or(base_colour);
-    let whisker_lw = a.f64_("whisker.linewidth").unwrap_or(lw);
+    let whisker_lw = a.f64_("whisker.linewidth").map(geom_lw).unwrap_or(lw);
     let staple_colour = a.colour_(&["staple.colour", "staple.color"]).unwrap_or(base_colour);
-    let staple_lw = a.f64_("staple.linewidth").unwrap_or(lw);
+    let staple_lw = a.f64_("staple.linewidth").map(geom_lw).unwrap_or(lw);
     let median_colour = a.colour_(&["median.colour", "median.color"]).unwrap_or(base_colour);
-    let median_lw = a.f64_("median.linewidth").unwrap_or(lw * 2.0); // fatten = 2
+    let median_lw = a.f64_("median.linewidth").map(geom_lw).unwrap_or(lw * 2.0); // fatten = 2
     let notch = a.bool_("notch").unwrap_or(false);
     let notchwidth = a.f64_("notchwidth").unwrap_or(0.5);
     let staplewidth = a.f64_("staplewidth").unwrap_or(0.0);
@@ -576,6 +579,7 @@ fn draw_legend(sc: &mut Scene, bp: &BuiltPlot, cs: &crate::scale::DiscreteColour
         .guides
         .get(aes)
         .or(cs.name.as_ref())
+        .or(bp.guide_sources.get(aes))
         .cloned()
         .unwrap_or_else(|| aes.to_string());
     // ggplot2 legend.title: rel(1) of base = 11pt, plain, black
@@ -598,10 +602,26 @@ fn draw_legend(sc: &mut Scene, bp: &BuiltPlot, cs: &crate::scale::DiscreteColour
     });
     let keys_top = block_top + title_h + 4.0;
     let is_fill = aes == "fill";
+    // ggplot2 uses each geom's own draw_key: line→segment, bar/col/hist→rect,
+    // point→circle. Pick the glyph from the layer that maps this aesthetic.
+    let key_is_line = bp
+        .layers
+        .iter()
+        .find(|l| l.aes.contains_key(aes))
+        .map(|l| matches!(l.geom, crate::spec::GeomSpec::Line))
+        .unwrap_or(false);
     for (i, lvl) in cs.levels.iter().enumerate() {
         let cy = keys_top + i as f64 * key_pitch + key_pitch / 2.0 - 0.5;
-        if is_fill {
-            // rect key
+        if key_is_line && !is_fill {
+            // geom_line/path: a horizontal segment across the key box
+            sc.layer(layer::LEGEND).push(Primitive::Segment {
+                x1: key_left,
+                y1: cy,
+                x2: key_left + key_w,
+                y2: cy,
+                stroke: Line::solid(cs.map(lvl), geom_lw(0.5)),
+            });
+        } else if is_fill {
             sc.layer(layer::LEGEND).push(Primitive::Rect {
                 x: key_left,
                 y: keys_top + i as f64 * key_pitch,

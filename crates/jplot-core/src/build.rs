@@ -487,6 +487,10 @@ pub struct BuiltPlot {
     pub y_scale: BuiltScale,
     pub colour_scale: Option<DiscreteColourScale>,
     pub fill_scale: Option<DiscreteColourScale>,
+    /// aes name mapped on the plot/layer ("colour"/"fill") → the data column
+    /// (R variable name) it maps from, e.g. colour -> "g". ggplot2 uses it as
+    /// the default guide title when no scale name is set.
+    pub guide_sources: HashMap<String, String>,
     pub aes_defaults: HashMap<String, AesDefault>,
     pub plot: PlotSpec,
 }
@@ -788,12 +792,21 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
         })
         .collect();
 
+    let mut guide_sources: HashMap<String, String> = HashMap::new();
+    for aes in &aes_map {
+        for k in ["colour", "fill"] {
+            if let Some(v) = aes.get(k) {
+                guide_sources.entry(k.to_string()).or_insert_with(|| v.clone());
+            }
+        }
+    }
     Ok(BuiltPlot {
         layers,
         x_scale: x_scale.unwrap(),
         y_scale: y_scale.unwrap(),
         colour_scale,
         fill_scale,
+        guide_sources,
         aes_defaults: HashMap::new(),
         plot: spec.clone(),
     })
