@@ -28,6 +28,18 @@ fn fill_attr(c: &Color) -> String {
     }
 }
 
+/// Full stroke attributes for a scene Line, including dasharray when set.
+fn line_attrs(l: &jplot_core::scene::Line) -> String {
+    let base = format!("stroke=\"{}\" stroke-width=\"{}\"", l.color.to_hex(), trim(l.width));
+    match &l.dash {
+        Some(d) if !d.is_empty() => {
+            let ds = d.iter().map(|x| format!("{}", trim(*x))).collect::<Vec<_>>().join(",");
+            format!("{} stroke-dasharray=\"{}\" stroke-dashoffset=\"0\"", base, ds)
+        }
+        _ => base,
+    }
+}
+
 fn stroke_attrs(color: &Color, width: f64) -> String {
     if color.a <= 0.0 || width <= 0.0 {
         return "fill=\"none\"".into();
@@ -91,7 +103,7 @@ fn draw_primitive(o: &mut String, p: &Primitive) {
         Primitive::Rect { x, y, w, h, fill, stroke } => {
             let f = fill.map(|pa| fill_attr(&pa.color)).unwrap_or_else(|| "fill=\"none\"".into());
             let s = match stroke {
-                Some(l) => format!(" stroke=\"{}\" stroke-width=\"{}\"", l.color.to_hex(), trim(l.width)),
+                Some(l) => format!(" {}", line_attrs(l)),
                 None => String::new(),
             };
             o.push_str(&format!("<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" {f}{s}/>", trim(*x), trim(*y), trim(*w), trim(*h)));
@@ -99,7 +111,7 @@ fn draw_primitive(o: &mut String, p: &Primitive) {
         Primitive::Circle { cx, cy, r, fill, stroke } => {
             let f = fill.map(|pa| fill_attr(&pa.color)).unwrap_or_else(|| "fill=\"none\"".into());
             let s = match stroke {
-                Some(l) => format!(" stroke=\"{}\" stroke-width=\"{}\"", l.color.to_hex(), trim(l.width)),
+                Some(l) => format!(" {}", line_attrs(l)),
                 None => String::new(),
             };
             o.push_str(&format!("<circle cx=\"{}\" cy=\"{}\" r=\"{}\" {f}{s}/>", trim(*cx), trim(*cy), trim(*r)));
@@ -108,7 +120,7 @@ fn draw_primitive(o: &mut String, p: &Primitive) {
             let pts: String = points.iter().map(|(x, y)| format!("{},{}", trim(*x), trim(*y))).collect::<Vec<_>>().join(" ");
             let f = fill.map(|pa| fill_attr(&pa.color)).unwrap_or_else(|| "fill=\"none\"".into());
             let s = match stroke {
-                Some(l) => format!(" stroke=\"{}\" stroke-width=\"{}\"", l.color.to_hex(), trim(l.width)),
+                Some(l) => format!(" {}", line_attrs(l)),
                 None => String::new(),
             };
             let tag = if *closed { "polygon" } else { "polyline" };

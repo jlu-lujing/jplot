@@ -945,6 +945,67 @@ impl DiscreteScale {
     }
 }
 
+/// Numeric→numeric scale for the `size` / `alpha` / `linewidth` aesthetics.
+/// ggplot2: size = area_pal (values ∝ sqrt(rescaled), range 1..6mm),
+/// alpha = linear rescale to 0.1..1; linewidth = linear 1..6mm.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NumScale {
+    pub data_lo: f64,
+    pub data_hi: f64,
+    pub out_lo: f64,
+    pub out_hi: f64,
+    pub area: bool,
+    pub name: Option<String>,
+}
+
+impl NumScale {
+    pub fn train(vals: &[f64], range: [f64; 2], area: bool, name: Option<String>) -> Self {
+        let mut lo = f64::INFINITY;
+        let mut hi = f64::NEG_INFINITY;
+        for &v in vals {
+            if v.is_finite() {
+                lo = lo.min(v);
+                hi = hi.max(v);
+            }
+        }
+        if !lo.is_finite() || !hi.is_finite() {
+            lo = 0.0;
+            hi = 1.0;
+        }
+        NumScale { data_lo: lo, data_hi: hi, out_lo: range[0], out_hi: range[1], area, name }
+    }
+
+    /// rescale (scales::rescale, clamped) then the palette transform:
+    /// area_pal is `rescale(sqrt(x), range, c(0,1))` → out = lo + (hi−lo)·√t.
+    pub fn map(&self, v: f64) -> f64 {
+        if !v.is_finite() {
+            return self.out_lo;
+        }
+        let t = if self.data_hi == self.data_lo {
+            1.0
+        } else {
+            ((v - self.data_lo) / (self.data_hi - self.data_lo)).clamp(0.0, 1.0)
+        };
+        if self.area {
+            self.out_lo + (self.out_hi - self.out_lo) * t.sqrt()
+        } else {
+            self.out_lo + (self.out_hi - self.out_lo) * t
+        }
+    }
+
+    /// legend breaks: extended(5) over the data range, censored inside it
+    /// (verified against R 4.0.3: hp∈[52,335] → 100..300).
+    pub fn breaks(&self) -> Vec<f64> {
+        if self.data_hi == self.data_lo {
+            return vec![self.data_lo];
+        }
+        extended_breaks(self.data_lo, self.data_hi, 5)
+            .into_iter()
+            .filter(|b| *b >= self.data_lo && *b <= self.data_hi)
+            .collect()
+    }
+}
+
 /// Colour mapping for a discrete aesthetic: hue palette by default,
 /// or manual palette / values from spec.
 #[derive(Debug, Clone, PartialEq)]

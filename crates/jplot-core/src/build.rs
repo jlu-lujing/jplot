@@ -560,6 +560,12 @@ pub struct BuiltPlot {
     pub fill_scale: Option<DiscreteColourScale>,
     /// discrete shape scale: (levels, their pch codes). None when no shape aes.
     pub shape_scale: Option<(Vec<String>, Vec<f64>)>,
+    /// continuous size scale (area_pal, range 1..6mm) when size is mapped.
+    pub size_scale: Option<crate::scale::NumScale>,
+    /// continuous alpha scale (linear, range 0.1..1) when alpha is mapped.
+    pub alpha_scale: Option<crate::scale::NumScale>,
+    /// discrete linetype scale: (levels, grid lty strings like "22")
+    pub linetype_scale: Option<(Vec<String>, Vec<String>)>,
     /// aes name mapped on the plot/layer ("colour"/"fill") → the data column
     /// (R variable name) it maps from, e.g. colour -> "g". ggplot2 uses it as
     /// the default guide title when no scale name is set.
@@ -884,6 +890,111 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
         }
     }
 
+    // size / alpha continuous scales (area_pal / linear). Values are read from
+    // each layer's mapped source column (e.g. aes(size=hp) → "hp").
+    // size / alpha continuous scales (area_pal / linear, R-verified): train on
+    // each layer's mapped source column (aes(size=hp) -> "hp"), then
+    // materialise mapped values onto the canonical aes column.
+    let (size_scale, alpha_scale) = {
+        let train_num = |name: &str, range: [f64; 2], area: bool| -> Option<crate::scale::NumScale> {
+            // frame columns live under the AES name (set during frame build)
+            let mut vals: Vec<f64> = Vec::new();
+            let mut src: Option<String> = None;
+            for (f, amap) in frames.iter().zip(aes_map.iter()) {
+                match amap.get(name) {
+                    Some(col) => {
+                        src.get_or_insert_with(|| col.clone());
+                        if let Some(v) = f.get(name) {
+                            vals.extend(v.iter().filter(|v| v.is_finite()).cloned());
+                        }
+                    }
+                    None => continue,
+                }
+            }
+            if vals.is_empty() {
+                return None;
+            }
+            let title = src.and_then(|s| {
+                spec.labels
+                    .guides
+                    .get(name)
+                    .cloned()
+                    .or_else(|| spec.scales.get(name).and_then(|sc| match sc {
+                        crate::scale::ScaleSpec::Continuous { name, .. } => name.clone(),
+                        _ => None,
+                    }))
+                    .or(Some(s))
+            });
+            Some(crate::scale::NumScale::train(&vals, range, area, title))
+        };
+        (train_num("size", [1.0, 6.0], true), train_num("alpha", [0.1, 1.0], false))
+    };
+    // discrete linetype scale (levels -> grid lty strings, max 6 values)
+    let linetype_scale: Option<(Vec<String>, Vec<String>)> = {
+        let mut levels: Vec<String> = Vec::new();
+        let mut declared: Option<Vec<String>> = None;
+        for (f, amap) in frames.iter().zip(aes_map.iter()) {
+            if !amap.contains_key("linetype") {
+                continue;
+            }
+            if let Some(v) = f.col("linetype") {
+                for s in v.iter().filter(|s| !s.is_empty()) {
+                    if !levels.iter().any(|l| l == s) {
+                        levels.push(s.clone());
+                    }
+                }
+            }
+            if declared.is_none() {
+                declared = f.levels.get("linetype").cloned();
+            }
+        }
+        if levels.is_empty() {
+            None
+        } else {
+            order_levels(&mut levels, declared.as_ref());
+            Some((levels.clone(), levels.clone()))
+        }
+    };
+    // materialise the lty string per row (index into LINETYPE_SEQ)
+    if let Some((levels, _)) = &linetype_scale {
+        for f in &mut frames {
+            if let Some(cats) = f.col("linetype").cloned() {
+                let mapped: Vec<String> = cats
+                    .iter()
+                    .map(|c| {
+                        levels
+                            .iter()
+                            .position(|l| l == c)
+                            .and_then(|i| crate::theme::geom_defaults::LINETYPE_SEQ.get(i).copied())
+                            .unwrap_or("solid")
+                            .to_string()
+                    })
+                    .collect();
+                f.set_cat("linetype", mapped);
+            }
+        }
+    }
+    {
+        let mut materialise = |frames: &mut Vec<Frame>| {
+            for (f, amap) in frames.iter_mut().zip(aes_map.iter()) {
+                for (aes, scale) in
+                    [("size", size_scale.as_ref()), ("alpha", alpha_scale.as_ref())]
+                {
+                    // frame stores the raw source column under the aes key
+                    if let Some(scale) = scale {
+                        if amap.contains_key(aes) {
+                            if let Some(v) = f.get(aes).cloned() {
+                                let mapped: Vec<f64> = v.iter().map(|&x| scale.map(x)).collect();
+                                f.set(aes, mapped);
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        materialise(&mut frames);
+    }
+
     let mut level_order: HashMap<&'static str, Vec<String>> = HashMap::new();
     if let Some(BuiltScale::Discrete(d)) = &x_scale {
         level_order.insert("x", d.levels.clone());
@@ -978,7 +1089,7 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
 
     let mut guide_sources: HashMap<String, String> = HashMap::new();
     for aes in &aes_map {
-        for k in ["colour", "fill"] {
+        for k in ["colour", "fill", "linetype", "size", "alpha", "shape"] {
             if let Some(v) = aes.get(k) {
                 guide_sources.entry(k.to_string()).or_insert_with(|| v.clone());
             }
@@ -998,6 +1109,9 @@ pub fn build(spec: &PlotSpec) -> Result<BuiltPlot, JplotError> {
                 .collect();
             (l, pchs)
         }),
+        size_scale,
+        alpha_scale,
+        linetype_scale,
         guide_sources,
         aes_defaults: HashMap::new(),
         plot: spec.clone(),

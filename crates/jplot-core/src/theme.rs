@@ -153,6 +153,9 @@ pub mod geom_defaults {
     /// shapes in scales' `seq_pal` order for hollow/filled pchs.
     pub const SHAPE_SEQ: [f64; 18] =
         [16.0, 17.0, 15.0, 3.0, 7.0, 8.0, 4.0, 12.0, 13.0, 14.0, 10.0, 11.0, 5.0, 1.0, 2.0, 0.0, 6.0, 9.0];
+    /// default discrete linetype sequence (R: solid,22,42,44,13,1343)
+    pub const LINETYPE_SEQ: [&'static str; 6] =
+        ["solid", "22", "42", "44", "13", "1343"];
     /// default point size (mm) = pointsize rel(1.5) of base 11 → 1.5mm.
     pub fn default_size_mm(base_size: f64) -> f64 {
         (base_size / 11.0) * 1.5

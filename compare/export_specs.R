@@ -253,4 +253,27 @@ drib <- data.frame(x = 1:6, ymin = c(1, 2, 1, 3, 2, 4), ymax = c(3, 4, 3, 5, 4, 
 save("31_ribbon", spec(drib, list(x = "x", ymin = "ymin", ymax = "ymax"), list(layer("ribbon"))))
 render("31_ribbon", ggplot(drib, aes(x, ymin = ymin, ymax = ymax)) + geom_ribbon())
 
+## 32 size aes (area scale) --------------------------------------------------
+save("32_size", spec(df, list(x = "disp", y = "mpg", size = "hp"), list(layer("point"))))
+render("32_size", ggplot(df, aes(disp, mpg, size = hp)) + geom_point())
+
+## 33 alpha aes ---------------------------------------------------------------
+save("33_alpha", spec(df, list(x = "disp", y = "mpg", alpha = "hp"), list(layer("point"))))
+render("33_alpha", ggplot(df, aes(disp, mpg, alpha = hp)) + geom_point())
+
+## 34 n.breaks ----------------------------------------------------------------
+save("34_nbreaks", spec(df, list(x = "disp", y = "mpg"), list(layer("point")),
+     scales = list(y = list(kind = "continuous", n_breaks = 10))))
+render("34_nbreaks", ggplot(df, aes(disp, mpg)) + geom_point() + scale_y_continuous(n.breaks = 10))
+
+## 35 boxplot coef -------------------------------------------------------------
+save("35_box_coef", spec(df, list(x = "cyl", y = "mpg"), list(layer("boxplot", args = list(coef = 0.5)))))
+render("35_box_coef", ggplot(df, aes(cyl, mpg)) + geom_boxplot(coef = 0.5))
+
+## 36 linetype mapping -------------------------------------------------------
+dlt <- data.frame(x = rep(1:6, each = 1), y = 1:6)
+dlt <- transform(dlt, x = rep(1:10, 3), y = rep(1:10, 3), l = rep(c("a", "b", "c"), each = 10))
+save("36_linetype", spec(dlt, list(x = "x", y = "y", linetype = "l"), list(layer("line"))))
+render("36_linetype", ggplot(dlt, aes(x, y, linetype = l)) + geom_line())
+
 cat("exported", length(list.files("specs")), "specs + refs\n")

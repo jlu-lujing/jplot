@@ -55,7 +55,9 @@ impl Viewport {
 #[derive(Debug, Clone)]
 enum KeyGlyph {
     Circle(Color),
+    CircleR(f64, Color), // custom radius (size/alpha guides), colour
     Segment(Color),
+    SegmentD(Option<Vec<f64>>, Color), // dashed segment (linetype guide)
     Rect(Color),
     Pch(i32, Color, Color), // shape, colour, fill
 }
@@ -125,6 +127,46 @@ fn build_guides(bp: &BuiltPlot, ls: &TextStyle) -> Vec<Guide> {
         let glyphs = pchs.iter().map(|&s| KeyGlyph::Pch(s as i32, colour, colour)).collect();
         guides.push(Guide { title: title_of("shape", None), levels: levels.clone(), glyphs });
     }
+    // continuous size / alpha guides: keys are default-point circles whose
+    // radius (size) or fill-opacity (alpha) varies with the break value.
+    for (aes, ns, size_key) in [("size", &bp.size_scale, true), ("alpha", &bp.alpha_scale, false)] {
+        if let Some(ns) = ns {
+            let brk = ns.breaks();
+            let levels = crate::scale::format_breaks(&brk);
+            let colour = bp
+                .layers
+                .iter()
+                .find(|l| l.aes.contains_key(aes))
+                .and_then(|l| l.args.colour_(&["colour", "color"]))
+                .unwrap_or(Color::black());
+            let glyphs = brk
+                .iter()
+                .map(|&b| {
+                    if size_key {
+                        let mm = ns.map(b);
+                        KeyGlyph::CircleR(point_r_px(mm) + point_stroke(0.5) * 0.5, colour)
+                    } else {
+                        KeyGlyph::CircleR(point_r_px(1.5), colour.with_alpha(ns.map(b)))
+                    }
+                })
+                .collect();
+            guides.push(Guide { title: ns.name.clone().unwrap_or_else(|| aes.into()), levels, glyphs });
+        }
+    }    // linetype guide: key = short line segment carrying the lty dash pattern
+    if let Some((levels, lty)) = bp.linetype_scale.as_ref() {
+        let colour = bp
+            .layers
+            .iter()
+            .find(|l| l.aes.contains_key("linetype"))
+            .and_then(|l| l.args.colour_(&["colour", "color"]))
+            .unwrap_or(Color::black());
+        let glyphs = lty
+            .iter()
+            .map(|t| KeyGlyph::SegmentD(crate::scene::dash_for(t, geom_lw(0.5)), colour))
+            .collect();
+        guides.push(Guide { title: bp.guide_sources.get("linetype").cloned().unwrap_or_else(|| "linetype".into()), levels: levels.clone(), glyphs });
+    }
+
     guides
 }
 
@@ -229,13 +271,13 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
         for &b in &x_breaks {
             let x = vp.map_x(&bp.x_scale, b);
             if x > vp.x0 && x < vp.x1 {
-                sc.layer(layer::GRID).push(Primitive::Segment { x1: x, y1: vp.y0, x2: x, y2: vp.y1, stroke: gl });
+                sc.layer(layer::GRID).push(Primitive::Segment { x1: x, y1: vp.y0, x2: x, y2: vp.y1, stroke: gl.clone() });
             }
         }
         for &b in &y_breaks {
             let y = vp.map_y(&bp.y_scale, b);
             if y > vp.y0 && y < vp.y1 {
-                sc.layer(layer::GRID).push(Primitive::Segment { x1: vp.x0, y1: y, x2: vp.x1, y2: y, stroke: gl });
+                sc.layer(layer::GRID).push(Primitive::Segment { x1: vp.x0, y1: y, x2: vp.x1, y2: y, stroke: gl.clone() });
             }
         }
     }
@@ -275,7 +317,7 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
             if x < vp.x0 - 0.5 || x > vp.x1 + 0.5 {
                 continue;
             }
-            sc.layer(layer::AXES).push(Primitive::Segment { x1: x, y1: vp.y1, x2: x, y2: vp.y1 + tick, stroke: al });
+            sc.layer(layer::AXES).push(Primitive::Segment { x1: x, y1: vp.y1, x2: x, y2: vp.y1 + tick, stroke: al.clone() });
             push_label(&mut sc, lab, x, vp.y1 + tick + 2.42 + 0.76 * label_style.size, label_style.clone());
         }
         for (&b, lab) in y_breaks.iter().zip(y_labels.iter()) {
@@ -283,7 +325,7 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
             if y < vp.y0 - 0.5 || y > vp.y1 + 0.5 {
                 continue;
             }
-            sc.layer(layer::AXES).push(Primitive::Segment { x1: vp.x0 - tick, y1: y, x2: vp.x0, y2: y, stroke: al });
+            sc.layer(layer::AXES).push(Primitive::Segment { x1: vp.x0 - tick, y1: y, x2: vp.x0, y2: y, stroke: al.clone() });
             let st = TextStyle { halign: TextAlign::Right, ..label_style.clone() };
             sc.layer(layer::AXES).push(Primitive::Text { content: lab.clone(), x: vp.x0 - tick - hl, y: y + 0.31 + 0.76 * st.size, style: st });
         }
@@ -416,9 +458,9 @@ fn draw_errorbar(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &Bu
         let (cl, cr) = (vp.map_x(&bp.x_scale, xs[i] - width / 2.0), vp.map_x(&bp.x_scale, xs[i] + width / 2.0));
         let c = point_colour_of(l, i, bp);
         let ln = Line::solid(c, lw);
-        ops.push(Primitive::Segment { x1: px, y1: p0, x2: px, y2: p1, stroke: ln });
-        ops.push(Primitive::Segment { x1: cl, y1: p0, x2: cr, y2: p0, stroke: ln });
-        ops.push(Primitive::Segment { x1: cl, y1: p1, x2: cr, y2: p1, stroke: ln });
+        ops.push(Primitive::Segment { x1: px, y1: p0, x2: px, y2: p1, stroke: ln.clone() });
+        ops.push(Primitive::Segment { x1: cl, y1: p0, x2: cr, y2: p0, stroke: ln.clone() });
+        ops.push(Primitive::Segment { x1: cl, y1: p1, x2: cr, y2: p1, stroke: ln.clone() });
     }
 }
 
@@ -610,6 +652,20 @@ fn draw_vline(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &Built
     }
 }
 
+/// dash pattern for a row's linetype (mapped column / arg / solid).
+fn linetype_of(l: &crate::build::BuiltLayer, i: usize, stroke_px: f64) -> Option<Vec<f64>> {
+    let name = l
+        .frame
+        .cat
+        .get("linetype")
+        .and_then(|v| v.get(i).cloned())
+        .or_else(|| l.args.s("linetype").map(|s| s.to_string()));
+    match name {
+        Some(n) => crate::scene::dash_for(&n, stroke_px),
+        None => None,
+    }
+}
+
 fn point_colour_of(l: &crate::build::BuiltLayer, i: usize, bp: &BuiltPlot) -> Color {
     let alpha = l.args.f64_("alpha").unwrap_or(1.0);
     if let Some(c) = l.args.colour_(&["colour", "color"]) {
@@ -721,18 +777,26 @@ fn push_glyph(ops: &mut Vec<Primitive>, shape: i32, cx: f64, cy: f64, r: f64, st
 fn draw_points(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltPlot, vp: &Viewport) {
     let size = l.args.f64_("size").unwrap_or(1.5);
     let stroke = l.args.f64_("stroke").unwrap_or(0.5);
-    let r = point_r_px(size) + point_stroke(stroke) * 0.5;
-    let stk = point_stroke(stroke);
     let default_shape = l.args.f64_("shape").unwrap_or(19.0) as i32;
     let (xs, ys) = (l.frame.get("x").cloned().unwrap_or_default(), l.frame.get("y").cloned().unwrap_or_default());
     let shapes = l.frame.get("shape").cloned();
+    let sizes = l.frame.get("size").cloned();
+    let alphas = l.frame.get("alpha").cloned();
+    let arg_alpha = l.args.f64_("alpha").unwrap_or(1.0);
     for i in 0..xs.len().min(ys.len()) {
         if !xs[i].is_finite() || !ys[i].is_finite() {
             continue;
         }
+        // mapped size (mm) / alpha override the defaults per row
+        let size = sizes.as_ref().and_then(|v| v.get(i).copied()).unwrap_or(size);
+        let alpha = alphas.as_ref().and_then(|v| v.get(i).copied()).unwrap_or(arg_alpha);
+        let r = point_r_px(size) + point_stroke(stroke) * 0.5;
+        let stk = point_stroke(stroke);
         let shape = shapes.as_ref().and_then(|v| v.get(i).copied()).map(|s| s as i32).unwrap_or(default_shape);
-        let c = point_colour_of(l, i, bp);
-        let f = point_fill_of(l, i, bp);
+        let mut c = point_colour_of(l, i, bp);
+        let mut f = point_fill_of(l, i, bp);
+        c.a *= alpha;
+        f.a *= alpha;
         let (cx, cy) = (vp.map_x(&bp.x_scale, xs[i]), vp.map_y(&bp.y_scale, ys[i]));
         push_glyph(ops, shape, cx, cy, r, stk, c, f);
     }
@@ -760,9 +824,12 @@ fn draw_lines(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &Built
         if pts.len() < 2 {
             continue;
         }
+        let lt = linetype_of(l, rep, width_px);
+        let mut stroke = Line::solid(point_colour_of(l, rep, bp), width_px);
+        stroke.dash = lt;
         ops.push(Primitive::Polyline {
             points: pts,
-            stroke: Some(Line::solid(point_colour_of(l, rep, bp), width_px)),
+            stroke: Some(stroke),
             fill: None,
             closed: false,
         });
@@ -871,23 +938,23 @@ fn draw_boxplot(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &Bui
                 (xb0, yq3), (xb0, ynhi), (xb0 + ind, ymed), (xb0, ynlo), (xb0, yq1),
                 (xb1, yq1), (xb1, ynlo), (xb1 - ind, ymed), (xb1, ynhi), (xb1, yq3),
             ];
-            ops.push(Primitive::Polyline { points: pts, stroke: Some(box_line), fill: Some(Paint::new(Color::white())), closed: true });
-            ops.push(Primitive::Segment { x1: xb0 + ind, y1: ymed, x2: xb1 - ind, y2: ymed, stroke: median_line });
+            ops.push(Primitive::Polyline { points: pts, stroke: Some(box_line.clone()), fill: Some(Paint::new(Color::white())), closed: true });
+            ops.push(Primitive::Segment { x1: xb0 + ind, y1: ymed, x2: xb1 - ind, y2: ymed, stroke: median_line.clone() });
         } else {
             ops.push(Primitive::Rect {
                 x: xb0, y: yq3.min(yq1), w: xb1 - xb0, h: (yq1 - yq3).abs(),
-                fill: Some(Paint::new(Color::white())), stroke: Some(box_line),
+                fill: Some(Paint::new(Color::white())), stroke: Some(box_line.clone()),
             });
-            ops.push(Primitive::Segment { x1: xb0, y1: ymed, x2: xb1, y2: ymed, stroke: median_line });
+            ops.push(Primitive::Segment { x1: xb0, y1: ymed, x2: xb1, y2: ymed, stroke: median_line.clone() });
         }
         // whiskers: vertical centre line, box→whisker extreme (both ends)
-        ops.push(Primitive::Segment { x1: xc, y1: yq3, x2: xc, y2: yhi, stroke: whisker_line });
-        ops.push(Primitive::Segment { x1: xc, y1: yq1, x2: xc, y2: ylo, stroke: whisker_line });
+        ops.push(Primitive::Segment { x1: xc, y1: yq3, x2: xc, y2: yhi, stroke: whisker_line.clone() });
+        ops.push(Primitive::Segment { x1: xc, y1: yq1, x2: xc, y2: ylo, stroke: whisker_line.clone() });
         // staples only when staplewidth != 0
         if staplewidth != 0.0 {
             let half = (xb1 - xb0) * staplewidth / 2.0;
-            ops.push(Primitive::Segment { x1: xc - half, y1: yhi, x2: xc + half, y2: yhi, stroke: staple_line });
-            ops.push(Primitive::Segment { x1: xc - half, y1: ylo, x2: xc + half, y2: ylo, stroke: staple_line });
+            ops.push(Primitive::Segment { x1: xc - half, y1: yhi, x2: xc + half, y2: yhi, stroke: staple_line.clone() });
+            ops.push(Primitive::Segment { x1: xc - half, y1: ylo, x2: xc + half, y2: ylo, stroke: staple_line.clone() });
         }
     }
     // outliers (only if not dropped via outliers=FALSE)
@@ -970,13 +1037,24 @@ fn draw_legends(sc: &mut Scene, guides: &[Guide], theme: &Theme, width: f64, vp:
             let cy = key_bl - 3.15;
             let r = geom_defaults::point_r_px(1.5);
             match &g.glyphs[i] {
-                KeyGlyph::Segment(c) => sc.layer(layer::LEGEND).push(Primitive::Segment {
+                KeyGlyph::Segment(c) | KeyGlyph::SegmentD(None, c) => sc.layer(layer::LEGEND).push(Primitive::Segment {
                     x1: key_left,
                     y1: cy,
                     x2: key_left + key_w,
                     y2: cy,
                     stroke: Line::solid(*c, geom_lw(0.5)),
                 }),
+                KeyGlyph::SegmentD(Some(d), c) => {
+                    let mut ln = Line::solid(*c, geom_lw(0.5));
+                    ln.dash = Some(d.clone());
+                    sc.layer(layer::LEGEND).push(Primitive::Segment {
+                        x1: key_left,
+                        y1: cy,
+                        x2: key_left + key_w,
+                        y2: cy,
+                        stroke: ln,
+                    });
+                }
                 KeyGlyph::Rect(c) => sc.layer(layer::LEGEND).push(Primitive::Rect {
                     x: key_left,
                     y: cy - 8.0,
@@ -988,7 +1066,14 @@ fn draw_legends(sc: &mut Scene, guides: &[Guide], theme: &Theme, width: f64, vp:
                 KeyGlyph::Circle(c) => sc.layer(layer::LEGEND).push(Primitive::Circle {
                     cx: key_cx,
                     cy,
-                    r,
+                    r: geom_defaults::point_r_px(1.5),
+                    fill: Some(Paint::new(*c)),
+                    stroke: Some(Line::solid(*c, point_stroke(0.5))),
+                }),
+                KeyGlyph::CircleR(r, c) => sc.layer(layer::LEGEND).push(Primitive::Circle {
+                    cx: key_cx,
+                    cy,
+                    r: *r,
                     fill: Some(Paint::new(*c)),
                     stroke: Some(Line::solid(*c, point_stroke(0.5))),
                 }),
