@@ -121,23 +121,25 @@ fn draw_primitive(o: &mut String, p: &Primitive) {
             ));
         }
         Primitive::Text { content, x, y, style } => {
-            let m = measure(content, style);
+            // Scene Text semantics: `y` is the BASELINE, `x` is the anchor x
+            // (centre for middle/right alignment). Mirrors svglite output.
             let weight = if style.bold { " font-weight=\"bold\"" } else { "" };
             let attrs = format!("{} font-size=\"{}\"{weight}", fill_attr(&style.color), trim(style.size));
+            let anchor = match style.halign {
+                TextAlign::Left => "start",
+                TextAlign::Center => "middle",
+                TextAlign::Right => "end",
+            };
             if style.angle.abs() > 0.0 {
-                // (x, y) = centre of the rotated box; CCW angle → SVG rotate(-a)
-                let left = x - m.width / 2.0;
-                let by = baseline_y(*y, &m);
+                // rotate CCW about (x, y) = svglite translate(x,y) rotate(-a)
                 o.push_str(&format!(
-                    "<text x=\"{}\" y=\"{}\" {} text-anchor=\"start\" transform=\"rotate({}, {}, {})\">{}</text>",
-                    trim(left), trim(by), attrs, trim(-style.angle), trim(*x), trim(*y), esc(content)
+                    "<text x=\"{}\" y=\"{}\" {} text-anchor=\"middle\" transform=\"rotate({}, {}, {})\">{}</text>",
+                    trim(*x), trim(*y), attrs, trim(-style.angle), trim(*x), trim(*y), esc(content)
                 ));
             } else {
-                // x already = left edge from layout; y = vertical centre
-                let by = baseline_y(*y, &m);
                 o.push_str(&format!(
-                    "<text x=\"{}\" y=\"{}\" {} text-anchor=\"start\">{}</text>",
-                    trim(*x), trim(by), attrs, esc(content)
+                    "<text x=\"{}\" y=\"{}\" {} text-anchor=\"{}\">{}</text>",
+                    trim(*x), trim(*y), attrs, anchor, esc(content)
                 ));
             }
         }

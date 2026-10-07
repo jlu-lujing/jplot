@@ -174,10 +174,12 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
     // --- axes ---------------------------------------------------------------
     {
         let al = tick_line;
-        let mut push_label = |s: &mut Scene, content: &str, x: f64, cy: f64, st: TextStyle| {
-            let m = measure(content, &st);
-            let x = left_edge(&m, &st, x);
-            s.layer(layer::AXES).push(Primitive::Text { content: content.into(), x, y: cy, style: st });
+        // Text `y` is now the BASELINE and `x` the centre (renderer does
+        // text-anchor:middle); svglite baselines:
+        //   x-label = y1 + tick + 2.42 + ascent ; y-label = break + 0.31 + ascent
+        //   x-title = 472.20 (fixed), y-title centred translate(13.36, mid)
+        let mut push_label = |s: &mut Scene, content: &str, cx: f64, baseline: f64, st: TextStyle| {
+            s.layer(layer::AXES).push(Primitive::Text { content: content.into(), x: cx, y: baseline, style: st });
         };
         for (&b, lab) in x_breaks.iter().zip(x_labels.iter()) {
             let x = vp.map_x(&bp.x_scale, b);
@@ -185,7 +187,7 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
                 continue;
             }
             sc.layer(layer::AXES).push(Primitive::Segment { x1: x, y1: vp.y1, x2: x, y2: vp.y1 + tick, stroke: al });
-            push_label(&mut sc, lab, x, vp.y1 + tick + hl + label_style.size / 2.0, label_style.clone());
+            push_label(&mut sc, lab, x, vp.y1 + tick + 2.42 + 0.76 * label_style.size, label_style.clone());
         }
         for (&b, lab) in y_breaks.iter().zip(y_labels.iter()) {
             let y = vp.map_y(&bp.y_scale, b);
@@ -194,22 +196,21 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
             }
             sc.layer(layer::AXES).push(Primitive::Segment { x1: vp.x0 - tick, y1: y, x2: vp.x0, y2: y, stroke: al });
             let st = TextStyle { halign: TextAlign::Right, ..label_style.clone() };
-            let cy = y;
-            let m = measure(lab, &st);
-            let x = left_edge(&m, &st, vp.x0 - tick - hl);
-            sc.layer(layer::AXES).push(Primitive::Text { content: lab.clone(), x, y: cy, style: st });
+            sc.layer(layer::AXES).push(Primitive::Text { content: lab.clone(), x: vp.x0 - tick - hl, y: y + 0.31 + 0.76 * st.size, style: st });
         }
         if !x_lab.is_empty() {
-            let m = measure(&x_lab, &label_style);
-            let x = (vp.x0 + vp.x1) / 2.0 - m.width / 2.0;
-            sc.layer(layer::TITLES).push(Primitive::Text { content: x_lab.clone(), x, y: height - hl - label_style.size * 1.2, style: label_style.clone() });
+            // svglite: "disp" baseline = 472.20 (= height - 7.80), size 11, centred
+            let ts = TextStyle { size: theme.base_size, ..label_style.clone() };
+            sc.layer(layer::TITLES).push(Primitive::Text { content: x_lab.clone(), x: (vp.x0 + vp.x1) / 2.0, y: height - 7.80, style: ts });
         }
         if !y_lab.is_empty() {
+            // svglite: translate(13.36, 226.99) rotate(-90) anchor=middle
+            let ts = TextStyle { size: theme.base_size, angle: 90.0, ..label_style.clone() };
             sc.layer(layer::TITLES).push(Primitive::Text {
                 content: y_lab.clone(),
-                x: hl + label_style.size / 2.0,
+                x: 13.36,
                 y: (vp.y0 + vp.y1) / 2.0,
-                style: TextStyle { angle: 90.0, ..label_style.clone() },
+                style: ts,
             });
         }
     }
@@ -217,11 +218,12 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
     // --- titles / caption ----------------------------------------------------
     if let Some(t) = &spec.labels.title {
         let ts = TextStyle { size: theme.large_text(), halign: TextAlign::Left, ..Default::default() };
-        sc.layer(layer::TITLES).push(Primitive::Text { content: t.clone(), x: vp.x0, y: theme.title_space_pt() + ts.size / 2.0, style: ts });
+        // svglite title baseline = 14.93 (size 13.2)
+        sc.layer(layer::TITLES).push(Primitive::Text { content: t.clone(), x: vp.x0, y: 14.93, style: ts });
     }
     if let Some(t) = &spec.labels.subtitle {
         let ts = TextStyle { size: theme.small_text(), halign: TextAlign::Left, ..Default::default() };
-        let y = theme.title_space_pt() + theme.large_text() + hl / 2.0 + ts.size / 2.0;
+        let y = 14.93 + theme.large_text() + ts.size * 0.35;
         sc.layer(layer::TITLES).push(Primitive::Text { content: t.clone(), x: vp.x0, y, style: ts });
     }
     if let Some(c) = &spec.labels.caption {
@@ -513,7 +515,7 @@ fn draw_legend(sc: &mut Scene, bp: &BuiltPlot, cs: &crate::scale::DiscreteColour
     sc.layer(layer::LEGEND).push(Primitive::Text {
         content: title,
         x: tcx - tm.width / 2.0,
-        y: block_top + title_h / 2.0,
+        y: block_top + 0.76 * tstyle.size + 1.6,
         style: tstyle,
     });
     let keys_top = block_top + title_h + 4.0;
@@ -539,10 +541,11 @@ fn draw_legend(sc: &mut Scene, bp: &BuiltPlot, cs: &crate::scale::DiscreteColour
                 stroke: None,
             });
         }
+        // svglite: label baseline = key centre + 2.94 (230.06 vs 227.12)
         sc.layer(layer::LEGEND).push(Primitive::Text {
             content: lvl.clone(),
             x: label_left,
-            y: cy,
+            y: cy + 0.76 * ls.size - ls.size / 2.0 + 2.0,
             style: ls.clone(),
         });
     }
