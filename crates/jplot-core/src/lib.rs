@@ -3,6 +3,7 @@ pub mod build;
 pub mod data;
 pub mod error;
 pub mod layout;
+pub mod probes;
 pub mod scene;
 pub mod serde_util;
 pub mod scale;

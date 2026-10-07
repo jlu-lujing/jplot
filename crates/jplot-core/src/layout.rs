@@ -9,6 +9,7 @@ use crate::build::{BuiltPlot, BuiltScale};
 use crate::scene::{layer, Line, Paint, Primitive, Scene, TextAlign, TextStyle};
 use crate::scale::Color;
 use crate::text::{left_edge, measure};
+use crate::probes;
 use crate::theme::{geom_defaults, Theme};
 use crate::theme::geom_defaults::{geom_lw, point_r_px, point_stroke, theme_lw};
 
@@ -212,39 +213,36 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
     let x_lab = spec.labels.x.clone().or_else(|| auto_label_of(bp, "x")).unwrap_or_default();
     let y_lab = spec.labels.y.clone().or_else(|| auto_label_of(bp, "y")).unwrap_or_default();
 
-    // --- gutters: calibrated against ggplot2 4.0.3 cairo PNG probes -------
-    // (compare/refs pixel probes: panel x0 = 31..36 px, y1 = 446 px on a
-    //  720x480 canvas for default theme_grey scatter/bar/hist/box)
+    // --- gutters: calibrated against ggplot2 4.0.3 probes (see probes.rs) --
     let tick = theme.tick_length_pt;
-    // ggplot2 4.x gtable left column anatomy (probe_layout.R):
-    //   5.48 plot-margin | 13.74 rotated-ytitle (if present) | axis cell
-    // axis cell = widest tick label (DejaVu metrics = renderer's font) +
-    // 4.85 internal padding (tick 2.75 + label margin ~2.1).
     let mut left = {
         let w = y_labels.iter().map(|l| measure(l, &label_style).width).fold(0.0, f64::max);
-        w + 4.85
+        w + probes::gutter::AXIS_LABEL_PAD
     };
     if !y_lab.is_empty() {
-        left += 13.06; // svglite gtable ylab-l column (probe 07_line)
+        left += probes::gutter::YLAB_COL;
     }
-    left += 5.48;
+    left += probes::gutter::PLOT_MARGIN;
     // svglite: panel bottom = 448.5 → 31.5 gutter with x-axis title
     let mut bottom = {
         let _ = hl;
-        if !x_lab.is_empty() { 31.5 } else { 23.0 }
+        if !x_lab.is_empty() {
+            probes::gutter::BOTTOM_WITH_TITLE
+        } else {
+            probes::gutter::BOTTOM_NO_TITLE
+        }
     };
     if spec.labels.caption.is_some() {
         bottom += hl + theme.small_text();
     }
-    // svglite: y0=5.48; +17.7 with plot title (probe 08_col y0=23.18)
-    let mut top = 5.48;
+    let mut top = probes::gutter::PLOT_MARGIN;
     if spec.labels.title.is_some() {
-        top += 17.7;
+        top += probes::gutter::TITLE_H;
     }
     if spec.labels.subtitle.is_some() {
-        top += 14.5;
+        top += probes::gutter::SUBTITLE_H;
     }
-    let mut right = 5.48;
+    let mut right = probes::gutter::PLOT_MARGIN;
     let legend_width;
     let guides: Vec<Guide> = build_guides(bp, &label_style);
     {
@@ -258,10 +256,15 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
             let ts = TextStyle { size: theme.base_size, ..label_style.clone() };
             let title_gap = guides
                 .iter()
-                .map(|g| measure(&g.title, &ts).width / 2.0 - 16.0 / 2.0 + 5.12)
+                .map(|g| {
+                    measure(&g.title, &ts).width / 2.0
+                        - probes::legend::KEY_W / 2.0
+                        + probes::legend::TITLE_GAP
+                })
                 .fold(0.0f64, f64::max);
-            legend_width = 16.0 + 7.1 + maxlabel + 9.17;
-            right += legend_width.max(title_gap) + 10.96;
+            legend_width =
+                probes::legend::KEY_W + probes::legend::LABEL_GAP + maxlabel + probes::legend::BLOCK_PAD;
+            right += legend_width.max(title_gap) + probes::legend::RIGHT_EDGE;
         } else {
             legend_width = 0.0;
         }
@@ -337,7 +340,13 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
                 continue;
             }
             sc.layer(layer::AXES).push(Primitive::Segment { x1: x, y1: vp.y1, x2: x, y2: vp.y1 + tick, stroke: al.clone() });
-            push_label(&mut sc, lab, x, vp.y1 + tick + 2.42 + 0.76 * label_style.size, label_style.clone());
+            push_label(
+                &mut sc,
+                lab,
+                x,
+                vp.y1 + tick + probes::axis::XLABEL_PAD + probes::axis::BASELINE_FRAC * label_style.size,
+                label_style.clone(),
+            );
         }
         for (&b, lab) in y_breaks.iter().zip(y_labels.iter()) {
             let y = vp.map_y(&bp.y_scale, b);
@@ -346,19 +355,29 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
             }
             sc.layer(layer::AXES).push(Primitive::Segment { x1: vp.x0 - tick, y1: y, x2: vp.x0, y2: y, stroke: al.clone() });
             let st = TextStyle { halign: TextAlign::Right, ..label_style.clone() };
-            sc.layer(layer::AXES).push(Primitive::Text { content: lab.clone(), x: vp.x0 - tick - 2.2, y: y + 0.31 + 0.76 * st.size, style: st });
+            sc.layer(layer::AXES).push(Primitive::Text {
+                content: lab.clone(),
+                x: vp.x0 - tick - probes::axis::YLABEL_INSET,
+                y: y + probes::axis::YLABEL_PAD + probes::axis::BASELINE_FRAC * st.size,
+                style: st,
+            });
         }
         if !x_lab.is_empty() {
             // svglite: "disp" baseline = 472.20 (= height - 7.80), size 11, centred
             let ts = TextStyle { size: theme.base_size, ..label_style.clone() };
-            sc.layer(layer::TITLES).push(Primitive::Text { content: x_lab.clone(), x: (vp.x0 + vp.x1) / 2.0, y: height - 7.80, style: ts });
+            sc.layer(layer::TITLES).push(Primitive::Text {
+                content: x_lab.clone(),
+                x: (vp.x0 + vp.x1) / 2.0,
+                y: height - probes::axis::XTITLE_BASE,
+                style: ts,
+            });
         }
         if !y_lab.is_empty() {
             // svglite: translate(13.36, 226.99) rotate(-90) anchor=middle
             let ts = TextStyle { size: theme.base_size, angle: 90.0, ..label_style.clone() };
             sc.layer(layer::TITLES).push(Primitive::Text {
                 content: y_lab.clone(),
-                x: 13.36,
+                x: probes::axis::YTITLE_X,
                 y: (vp.y0 + vp.y1) / 2.0,
                 style: ts,
             });
@@ -368,12 +387,17 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
     // --- titles / caption ----------------------------------------------------
     if let Some(t) = &spec.labels.title {
         let ts = TextStyle { size: theme.large_text(), halign: TextAlign::Left, ..Default::default() };
-        // svglite title baseline = 14.93 (size 13.2)
-        sc.layer(layer::TITLES).push(Primitive::Text { content: t.clone(), x: vp.x0, y: 14.93, style: ts });
+        // svglite title baseline (size 13.2)
+        sc.layer(layer::TITLES).push(Primitive::Text {
+            content: t.clone(),
+            x: vp.x0,
+            y: probes::title::BASELINE,
+            style: ts,
+        });
     }
     if let Some(t) = &spec.labels.subtitle {
         let ts = TextStyle { size: theme.small_text(), halign: TextAlign::Left, ..Default::default() };
-        let y = 14.93 + theme.large_text() + ts.size * 0.35;
+        let y = probes::title::BASELINE + theme.large_text() + ts.size * probes::title::SUB_PAD;
         sc.layer(layer::TITLES).push(Primitive::Text { content: t.clone(), x: vp.x0, y, style: ts });
     }
     if let Some(c) = &spec.labels.caption {
@@ -755,7 +779,7 @@ fn draw_text(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltP
         // 0.716*size (the grid "text box" height for Arial at this size);
         // hjust=0 left edge at x, =0.5 centred, =1 right edge at x.
         let x = px - hjust * m.width;
-        let baseline = py + vjust * 0.716 * size_px;
+        let baseline = py + vjust * probes::axis::VJUST_BOX * size_px;
         ops.push(Primitive::Text { content: labels[i].clone(), x, y: baseline, style: style.clone() });
     }
 }
@@ -985,26 +1009,38 @@ fn push_glyph(ops: &mut Vec<Primitive>, shape: i32, cx: f64, cy: f64, r: f64, st
     let interior = if fillable { fill } else if solid { col } else { Color::transparent() };
     let border = if solid { Color::transparent() } else { col };
     let stroke = Line::solid(border, stk);
-    let tri_up = |rr: f64| vec![(cx, cy - 1.556 * rr), (cx - 1.348 * rr, cy + 0.777 * rr), (cx + 1.348 * rr, cy + 0.777 * rr)];
-    let tri_dn = |rr: f64| vec![(cx, cy + 1.556 * rr), (cx - 1.348 * rr, cy - 0.777 * rr), (cx + 1.348 * rr, cy - 0.777 * rr)];
+    let tri_up = |rr: f64| {
+        vec![
+            (cx, cy - probes::glyph::TRI_UP_Y * rr),
+            (cx - probes::glyph::TRI_X * rr, cy + probes::glyph::TRI_BASE_Y * rr),
+            (cx + probes::glyph::TRI_X * rr, cy + probes::glyph::TRI_BASE_Y * rr),
+        ]
+    };
+    let tri_dn = |rr: f64| {
+        vec![
+            (cx, cy + probes::glyph::TRI_UP_Y * rr),
+            (cx - probes::glyph::TRI_X * rr, cy - probes::glyph::TRI_BASE_Y * rr),
+            (cx + probes::glyph::TRI_X * rr, cy - probes::glyph::TRI_BASE_Y * rr),
+        ]
+    };
     match shape {
         0 | 15 | 22 => ops.push(Primitive::Rect { x: cx - r, y: cy - r, w: 2.0 * r, h: 2.0 * r, fill: if interior.a == 0.0 { None } else { Some(Paint::new(interior)) }, stroke: if border.a == 0.0 { None } else { Some(stroke) } }),
-        20 => ops.push(Primitive::Circle { cx, cy, r: r * 2.0 / 3.0, fill: Some(Paint::new(col)), stroke: None }),
+        20 => ops.push(Primitive::Circle { cx, cy, r: r * probes::glyph::DOT_RATIO, fill: Some(Paint::new(col)), stroke: None }),
         s if matches!(s, 1 | 16 | 19 | 21) => ops.push(Primitive::Circle { cx, cy, r, fill: if interior.a == 0.0 { None } else { Some(Paint::new(interior)) }, stroke: if border.a == 0.0 { None } else { Some(stroke) } }),
         2 | 17 | 24 => ops.push(Primitive::Polyline { points: tri_up(r), stroke: if border.a == 0.0 { None } else { Some(stroke) }, fill: if interior.a == 0.0 { None } else { Some(Paint::new(interior)) }, closed: true }),
         25 => ops.push(Primitive::Polyline { points: tri_dn(r), stroke: Some(stroke), fill: if interior.a == 0.0 { None } else { Some(Paint::new(interior)) }, closed: true }),
         5 | 18 | 23 => ops.push(Primitive::Polyline { points: vec![(cx, cy - r), (cx + r, cy), (cx, cy + r), (cx - r, cy)], stroke: if border.a == 0.0 { None } else { Some(stroke) }, fill: if interior.a == 0.0 { None } else { Some(Paint::new(interior)) }, closed: true }),
         3 => {
-            let a = 1.414 * r;
+            let a = probes::glyph::SQRT2 * r;
             ops.push(Primitive::Segment { x1: cx - a, y1: cy, x2: cx + a, y2: cy, stroke });
             ops.push(Primitive::Segment { x1: cx, y1: cy - a, x2: cx, y2: cy + a, stroke: Line::solid(border, stk) });
         }
         4 | 8 => {
-            let a = 1.414 * r * 0.7071;
+            let a = probes::glyph::SQRT2 * r * probes::glyph::INV_SQRT2;
             ops.push(Primitive::Segment { x1: cx - a, y1: cy - a, x2: cx + a, y2: cy + a, stroke: Line::solid(border, stk) });
             ops.push(Primitive::Segment { x1: cx - a, y1: cy + a, x2: cx + a, y2: cy - a, stroke: Line::solid(border, stk) });
             if shape == 8 {
-                let b = 1.414 * r;
+                let b = probes::glyph::SQRT2 * r;
                 ops.push(Primitive::Segment { x1: cx - b, y1: cy, x2: cx + b, y2: cy, stroke: Line::solid(border, stk) });
                 ops.push(Primitive::Segment { x1: cx, y1: cy - b, x2: cx, y2: cy + b, stroke: Line::solid(border, stk) });
             }
@@ -1211,7 +1247,11 @@ fn draw_boxplot(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &Bui
             // shapes: 19 solid circle; 17 solid triangle; 1/0 open circle; 21 fill+stroke
             match shape as i32 {
                 17 | 2 => {
-                    let pts = vec![(cx, cy - r * 1.15), (cx - r, cy + r * 0.8), (cx + r, cy + r * 0.8)];
+                    let pts = vec![
+                        (cx, cy - r * probes::glyph::OUTLIER_TRI_APEX),
+                        (cx - r, cy + r * probes::glyph::OUTLIER_TRI_BASE_Y),
+                        (cx + r, cy + r * probes::glyph::OUTLIER_TRI_BASE_Y),
+                    ];
                     let solid = shape as i32 == 17;
                     ops.push(Primitive::Polyline {
                         points: pts,
@@ -1241,32 +1281,32 @@ fn draw_boxplot(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &Bui
 fn draw_legends(sc: &mut Scene, guides: &[Guide], theme: &Theme, width: f64, vp: &Viewport) {
     let ls = TextStyle { size: theme.small_text(), color: Color::black(), halign: TextAlign::Left, ..Default::default() };
     let ts = TextStyle { size: theme.base_size, color: Color::black(), halign: TextAlign::Left, ..Default::default() };
-    let key_w = 16.0;
-    let pitch = 15.84;
-    let title_to_first = 17.7;
-    let inter = 35.8;
-    let right_edge = width - 5.48 - 5.48;
+    let key_w = probes::legend::KEY_W;
+    let pitch = probes::legend::PITCH;
+    let title_to_first = probes::legend::TITLE_TO_FIRST;
+    let inter = probes::legend::INTER_GUIDE;
+    let right_edge = width - 2.0 * probes::gutter::PLOT_MARGIN;
     let maxlabel = guides
         .iter()
         .flat_map(|g| g.levels.iter())
         .map(|l| measure(l, &ls).width)
         .fold(0.0f64, f64::max);
     let label_left = right_edge - maxlabel;
-    let key_left = label_left - 7.1 - key_w;
+    let key_left = label_left - probes::legend::LABEL_GAP - key_w;
     let key_cx = key_left + key_w / 2.0;
 
     // vertical layout: first-title baseline centred on the panel middle so
     // the whole stack's baseline span is balanced (probe: +2.11 offset).
     let guide_h = |g: &Guide| -> f64 {
         if g.bar.is_some() {
-            title_to_first + 63.3
+            title_to_first + probes::legend::BAR_SPAN
         } else {
             title_to_first + (g.levels.len().max(1) as f64 - 1.0) * pitch
         }
     };
     let total: f64 = guides.iter().map(guide_h).sum::<f64>()
         + inter * (guides.len().saturating_sub(1)) as f64;
-    let mut title_bl = (vp.y0 + vp.y1) / 2.0 - total / 2.0 + 2.11;
+    let mut title_bl = (vp.y0 + vp.y1) / 2.0 - total / 2.0 + probes::legend::CENTRE_ADJ;
 
     for g in guides {
         let tm = measure(&g.title, &ts);
@@ -1278,10 +1318,10 @@ fn draw_legends(sc: &mut Scene, guides: &[Guide], theme: &Theme, width: f64, vp:
         });
         if let Some((lo, hi, stops)) = &g.bar {
             let _ = (lo, hi);
-            let bar_top = title_bl + 6.64;
-            let bar_h = 79.2;
-            let bar_w = 16.0;
-            let slices = 48usize;
+            let bar_top = title_bl + probes::legend::BAR_TOP;
+            let bar_h = probes::legend::BAR_H;
+            let bar_w = probes::legend::KEY_W;
+            let slices = probes::legend::BAR_SLICES;
             for k in 0..slices {
                 let t = (k as f64 + 0.5) / slices as f64; // 0 bottom .. 1 top
                 let y = bar_top + bar_h * (1.0 - (k as f64 + 1.0) / slices as f64);
