@@ -1,5 +1,5 @@
 01_scatter 0.18%
-02_scatter_colour 0.40%
+02_scatter_colour 0.39%
 03_bar 0.05%
 04_bar_dodge 0.27%
 05_hist 0.18%
@@ -24,7 +24,7 @@
 24_freqpoly 1.82%
 25_hline 0.18%
 26_vline 0.18%
-27_stack 0.15%
+27_stack 0.17%
 28_text 0.02%
 29_area 0.02%
 30_errorbar 0.10%
@@ -44,13 +44,13 @@
 44_thm_bg 1.04%
 45_thm_axis 0.24%
 46_thm_noleg 0.17%
-47_density 2.02%
-48_violin 2.18%
+47_density 1.82%
+48_violin 0.68%
 49_flip_scatter 0.19%
 50_flip_box 0.10%
 51_brewer 0.40%
 52_viridis 0.41%
 53_greypal 0.18%
 54_lm 0.65%
-55_loess 2.82%
+55_loess 2.73%
 56_lm_nogroup 0.72%
