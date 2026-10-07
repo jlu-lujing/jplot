@@ -330,6 +330,15 @@ for (f in gallery_specs) {
 
 ## 43–46: theme(...) element overrides ---------------------------------------
 ## 47 density, 48 violin ------------------------------------------------------
+## 49 scatter flipped, 50 boxplot flipped ------------------------------------
+save("49_flip_scatter", spec(df, list(x = "disp", y = "mpg"), list(layer("point")),
+     theme = list(kind = "grey")) |> append(list(coord = "flip")))
+render("49_flip_scatter", ggplot(df, aes(disp, mpg)) + geom_point() + coord_flip())
+
+save("50_flip_box", spec(df, list(x = "cyl", y = "mpg"), list(layer("boxplot")),
+     theme = list(kind = "grey")) |> append(list(coord = "flip")))
+render("50_flip_box", ggplot(df, aes(cyl, mpg)) + geom_boxplot() + coord_flip())
+
 save("47_density", spec(df, list(x = "mpg"), list(layer("density"))))
 render("47_density", ggplot(df, aes(mpg)) + geom_density())
 

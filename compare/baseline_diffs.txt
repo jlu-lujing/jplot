@@ -46,3 +46,5 @@
 46_thm_noleg 0.17%
 47_density 2.02%
 48_violin 2.18%
+49_flip_scatter 0.42%
+50_flip_box 18.93%

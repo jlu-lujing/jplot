@@ -422,6 +422,9 @@ pub struct PlotSpec {
     pub width: f64,
     #[serde(default = "default_height")]
     pub height: f64,
+    /// cartesian | flip (ggplot2 coord_flip)
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub coord: String,
 }
 
 fn default_width() -> f64 {
@@ -442,6 +445,7 @@ impl Default for PlotSpec {
             theme: ThemeSpec::default(),
             width: default_width(),
             height: default_height(),
+            coord: String::new(),
         }
     }
 }
