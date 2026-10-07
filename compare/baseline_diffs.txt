@@ -40,3 +40,9 @@
 40_tile 0.01%
 41_pointrange 0.10%
 42_ablineh 0.19%
+43_thm_nogrid 0.18%
+44_thm_bg 1.04%
+45_thm_axis 0.24%
+46_thm_noleg 0.17%
+47_density 2.02%
+48_violin 2.18%
