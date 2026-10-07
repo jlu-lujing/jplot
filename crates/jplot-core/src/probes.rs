@@ -34,7 +34,7 @@ pub mod gutter {
 pub mod axis {
     /// x tick label baseline = panel y1 + tick + this + ascent·0.76·size…
     /// expressed as the fixed pad above the label's own baseline.
-    pub const XLABEL_PAD: f64 = 2.42;
+    pub const XLABEL_PAD: f64 = 1.80;
     /// fraction of font size from centre to baseline (Arial metrics 0.76).
     pub const BASELINE_FRAC: f64 = 0.76;
     /// y tick label: horizontal inset from panel x0 past the tick.

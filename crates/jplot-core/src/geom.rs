@@ -325,7 +325,7 @@ fn draw_text(ops: &mut Vec<Primitive>, l: &crate::build::BuiltLayer, bp: &BuiltP
         // hjust=0 left edge at x, =0.5 centred, =1 right edge at x.
         let x = px - hjust * m.width;
         let baseline = py + vjust * probes::axis::VJUST_BOX * size_px;
-        ops.push(Primitive::Text { content: labels[i].clone(), x, y: baseline, style: style.clone() });
+        ops.push(Primitive::Text { content: labels[i].clone(), x, y: baseline, style: style.clone() , text_length: None });
     }
 }
 

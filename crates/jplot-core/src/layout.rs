@@ -189,7 +189,12 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
         //   x-label = y1 + tick + 2.42 + ascent ; y-label = break + 0.31 + ascent
         //   x-title = 472.20 (fixed), y-title centred translate(13.36, mid)
         let push_label = |s: &mut Scene, content: &str, cx: f64, baseline: f64, st: TextStyle| {
-            s.layer(layer::AXES).push(Primitive::Text { content: content.into(), x: cx, y: baseline, style: st });
+            // R/svglite writes textLength from stringWidth; our Helvetica
+            // metrics are the same source, so pin resvg to it (removes
+            // natural-kerning drift → the dominant "bottom"/"left-gutter"
+            // residuals in triage).
+            let w = measure(content, &st).width;
+            s.layer(layer::AXES).push(Primitive::Text { content: content.into(), x: cx, y: baseline, style: st, text_length: Some(w) });
         };
         for (&b, lab) in x_breaks.iter().zip(x_labels.iter()) {
             let x = vp.map_x(&bp.x_scale, b);
@@ -212,6 +217,7 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
             }
             sc.layer(layer::AXES).push(Primitive::Segment { x1: vp.x0 - tick, y1: y, x2: vp.x0, y2: y, stroke: al.clone() });
             let st = TextStyle { halign: TextAlign::Right, ..label_style.clone() };
+            let yw = measure(lab, &st).width;
             sc.layer(layer::AXES).push(Primitive::Text {
                 content: lab.clone(),
                 x: vp.x0 - tick - probes::axis::YLABEL_INSET,
@@ -219,7 +225,7 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
                 // grid text-box below the tick, matching svglite (triage: the
                 // old 0.31+0.76·size pushed labels ~4px low).
                 y: y + probes::axis::VJUST_BOX / 2.0 * st.size,
-                style: st,
+                style: st, text_length: Some(yw)
             });
         }
         if !x_lab.is_empty() {
@@ -229,7 +235,7 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
                 content: x_lab.clone(),
                 x: (vp.x0 + vp.x1) / 2.0,
                 y: height - probes::axis::XTITLE_BASE,
-                style: ts,
+                style: ts, text_length: None
             });
         }
         if !y_lab.is_empty() {
@@ -239,7 +245,7 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
                 content: y_lab.clone(),
                 x: probes::axis::YTITLE_X,
                 y: (vp.y0 + vp.y1) / 2.0,
-                style: ts,
+                style: ts, text_length: None
             });
         }
     }
@@ -252,17 +258,17 @@ pub fn layout(bp: &BuiltPlot) -> Scene {
             content: t.clone(),
             x: vp.x0,
             y: probes::title::BASELINE,
-            style: ts,
+            style: ts, text_length: None
         });
     }
     if let Some(t) = &spec.labels.subtitle {
         let ts = TextStyle { size: theme.small_text(), halign: TextAlign::Left, ..Default::default() };
         let y = probes::title::BASELINE + theme.large_text() + ts.size * probes::title::SUB_PAD;
-        sc.layer(layer::TITLES).push(Primitive::Text { content: t.clone(), x: vp.x0, y, style: ts });
+        sc.layer(layer::TITLES).push(Primitive::Text { content: t.clone(), x: vp.x0, y, style: ts , text_length: None });
     }
     if let Some(c) = &spec.labels.caption {
         let ts = TextStyle { size: theme.small_text(), halign: TextAlign::Right, ..Default::default() };
-        sc.layer(layer::TITLES).push(Primitive::Text { content: c.clone(), x: vp.x1, y: height - hl - ts.size / 2.0, style: ts });
+        sc.layer(layer::TITLES).push(Primitive::Text { content: c.clone(), x: vp.x1, y: height - hl - ts.size / 2.0, style: ts , text_length: None });
     }
 
     // --- legend --------------------------------------------------------------

@@ -198,7 +198,7 @@ pub fn draw_legends(sc: &mut Scene, guides: &[Guide], theme: &Theme, width: f64,
             content: g.title.clone(),
             x: key_cx - tm.width / 2.0,
             y: title_bl,
-            style: ts.clone(),
+            style: ts.clone(), text_length: None
         });
         if let Some((lo, hi, stops)) = &g.bar {
             let _ = (lo, hi);
@@ -231,7 +231,7 @@ pub fn draw_legends(sc: &mut Scene, guides: &[Guide], theme: &Theme, width: f64,
                     content: lvl.clone(),
                     x: label_left,
                     y: ty,
-                    style: ls.clone(),
+                    style: ls.clone(), text_length: None
                 });
             }
             title_bl += guide_h(g) + inter;
@@ -303,7 +303,7 @@ pub fn draw_legends(sc: &mut Scene, guides: &[Guide], theme: &Theme, width: f64,
                 content: lvl.clone(),
                 x: label_left,
                 y: key_bl,
-                style: ls.clone(),
+                style: ls.clone(), text_length: None
             });
         }
         title_bl += guide_h(g) + inter;

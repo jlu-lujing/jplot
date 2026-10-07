@@ -132,16 +132,29 @@ fn draw_primitive(o: &mut String, p: &Primitive) {
                 stroke_attrs(&stroke.color, stroke.width)
             ));
         }
-        Primitive::Text { content, x, y, style } => {
+        Primitive::Text { content, x, y, style, text_length } => {
             // Scene Text semantics: `y` is the BASELINE, `x` is the anchor x
             // (centre for middle/right alignment). Mirrors svglite output.
-            let weight = if style.bold { " font-weight=\"bold\"" } else { "" };
-            let attrs = format!("{} font-size=\"{}\"{weight}", fill_attr(&style.color), trim(style.size));
             let anchor = match style.halign {
                 TextAlign::Left => "start",
                 TextAlign::Center => "middle",
                 TextAlign::Right => "end",
             };
+            // svglite writes textLength + lengthAdjust="spacingAndGlyphs"
+            // (R's own string metrics); resvg honours it — emitting it makes
+            // rasterised text widths match the reference exactly.
+            let tl = match text_length {
+                Some(w) if *w > 0.0 => {
+                    format!(" textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\"", trim(*w))
+                }
+                _ => String::new(),
+            };
+            let attrs = format!(
+                "{} font-size=\"{}\"{}{tl}",
+                fill_attr(&style.color),
+                trim(style.size),
+                if style.bold { " font-weight=\"bold\"" } else { "" }
+            );
             if style.angle.abs() > 0.0 {
                 // rotate CCW about (x, y) = svglite translate(x,y) rotate(-a)
                 o.push_str(&format!(

@@ -124,6 +124,10 @@ pub enum Primitive {
         x: f64,
         y: f64,
         style: TextStyle,
+        /// svglite emits `textLength` + `lengthAdjust="spacingAndGlyphs"`
+        /// (R stringWidth metrics); resvg honours it — reproducing it makes
+        /// rasterised text metrics identical to the reference.
+        text_length: Option<f64>,
     },
     Segment {
         x1: f64,
